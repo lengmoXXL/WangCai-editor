@@ -3,9 +3,6 @@ const { createWorkspace, openView, until } = require('@lengmoxxl/wangcai-testkit
 // The machine the window works on, which is the one a case's paths are read from.
 const machine = { id: 'local', name: '本机' };
 
-// A one-pixel picture: what this plugin cannot read as text, and what the preview plugin draws.
-const picture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
-
 // What a case's window lists: the workspace a file link comes from, and the views the sidebar picks from.
 const lists = { workspaces: ['terminal-agent'], tabs: ['editor', 'terminal'] };
 
@@ -31,13 +28,12 @@ const drawnCloseButtons = (page) => sidebarTabs(page).filter({ visible: true }).
 const closeTab = (page, name) => page.getByRole('button', { name: `关闭 ${name}`, exact: true });
 
 // The window's two sidebars and the pane between them, plus the panel on show in the right one and every panel of this
-// plugin and of the preview plugin, hidden ones included.
+// plugin, hidden ones included.
 const sidebarLeft = (page) => page.locator('.sidebar-left');
 const sidebarRight = (page) => page.locator('.sidebar-right');
 const desktopMain = (page) => page.locator('.desktop-main');
 const shownPanel = (page) => page.locator('.sidebar-panel:visible');
 const editorPanels = (page) => page.locator('.sidebar-panel[data-plugin=editor]');
-const previewPanels = (page) => page.locator('.sidebar-panel[data-plugin=preview]');
 
 // The window's errors, which the cases collect and assert are empty.
 const collectErrors = (page, errors) => {
@@ -70,17 +66,17 @@ const goToPath = async (scope, path) => {
 // The address box shows a path once the panel has taken it in.
 const waitForPath = (scope, path) => until(async () => (await pathBox(scope).first().inputValue()) === path);
 
-// The code a panel's editor shows, as monaco draws it line by line.
-const editorLines = (scope) => scope.locator('.monaco-editor .view-lines');
+// The code a panel's editor shows.
+const editorLines = (scope) => scope.locator('.editor-code .cm-content');
 const codeView = (scope, text) => editorLines(scope).filter({ hasText: text });
+// The lines the editor has drawn: a view that scrolled keeps the ones it drew before, so this is not only what is on
+// screen.
+const drawnLines = (page) => page.evaluate(() => [...document.querySelectorAll('.editor-code .cm-line')].map((line) => line.textContent ?? ''));
 
-// The line the caret is drawn on: monaco gives the caret the offset of the line it sits in, and draws only the lines
-// its viewport holds, so the caret's line is the one whose offset it shares.
+// The line the caret is drawn on: the editor marks it, and the mark is the line the keyboard is on.
 const cursorLine = (page) => page.evaluate(() => {
-  const caret = document.querySelector('.editor-code .cursors-layer > .cursor');
-  const top = caret && getComputedStyle(caret).top;
-  const line = [...document.querySelectorAll('.editor-code .view-line')].find((element) => getComputedStyle(element).top === top);
-  return line ? line.textContent.replace(/\u00a0/g, ' ') : null;
+  const active = document.querySelector('.editor-code .cm-activeLine');
+  return active ? active.textContent : null;
 });
 const waitForLine = (page, text) => until(async () => (await cursorLine(page)) === text);
 
@@ -91,11 +87,6 @@ const editorFocused = (page) => page.evaluate(() => Boolean(document.activeEleme
 const backButton = (page) => page.getByRole('button', { name: '后退', exact: true });
 const forwardButton = (page) => page.getByRole('button', { name: '前进', exact: true });
 const refreshButton = (page) => page.getByRole('button', { name: '刷新', exact: true });
-
-// The dot that stands in that header for the file's language service, and the detail its hover shows: a state narrows
-// the dot to one the dot itself carries.
-const lspDot = (page, state) => page.locator(state ? `.editor-lsp.${state}` : '.editor-lsp');
-const lspDetail = (page) => page.locator('.editor-lsp-detail');
 
 // The right sidebar is shown and hidden by its own button, and added to from the button beside it.
 const sidebarToggle = (page) => page.getByRole('button', { name: '切换右侧栏' });
@@ -120,11 +111,10 @@ const searchRows = (scope) => searchPanel(scope).locator('.search-row');
 const searchRow = (scope, text) => searchRows(scope).filter({ hasText: text }).first();
 const searchNote = (scope) => searchPanel(scope).locator('.search-note');
 const filesEmpty = (scope) => searchPanel(scope).getByText('没有匹配的文件', { exact: true });
-// What a row prints: its title, and the folder or container beside it. Both take the scope to look in, which is the
-// panel or one row.
+// What a row prints: its title, and the path beside it. Both take the scope to look in, which is the panel or one row.
 const searchTitle = (scope) => scope.locator('.search-title');
 const searchDetail = (scope) => scope.locator('.search-detail');
-// The characters the picker marked in a row: the ones the query matched in the title, and in the folder beside it.
+// The characters the picker marked in a row: the ones the query matched in the title, and in the path beside it.
 const searchMarks = async (row) => ({
   title: await searchTitle(row).locator('b').allInnerTexts(),
   detail: await searchDetail(row).locator('b').allInnerTexts(),
@@ -169,7 +159,6 @@ const closeWorkspace = async (tab) => {
 
 module.exports = {
   machine,
-  picture,
   lists,
   boxOf,
   workspaceBar,
@@ -185,7 +174,6 @@ module.exports = {
   desktopMain,
   shownPanel,
   editorPanels,
-  previewPanels,
   collectErrors,
   openWorkspaces,
   alert,
@@ -196,14 +184,12 @@ module.exports = {
   waitForPath,
   editorLines,
   codeView,
-  cursorLine,
   waitForLine,
+  drawnLines,
   editorFocused,
   backButton,
   forwardButton,
   refreshButton,
-  lspDot,
-  lspDetail,
   sidebarToggle,
   newSidebarTab,
   runIn,
@@ -214,8 +200,6 @@ module.exports = {
   searchRow,
   searchNote,
   filesEmpty,
-  searchTitle,
-  searchDetail,
   searchMarks,
   openSearch,
   submitSearch,

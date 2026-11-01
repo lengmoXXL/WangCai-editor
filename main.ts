@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
-import type { MachineConnection, Process } from '@lengmoxxl/sdk';
+import type { MachineConnection } from '@lengmoxxl/sdk';
 import type { MainContext } from '@lengmoxxl/sdk/channel';
-import { machineKey, type FileClick, type History, type LspData, type SearchHit, type Settings } from './shared';
+import { machineKey, type FileClick, type History, type SearchHit } from './shared';
 
 export const keys = { '<leader>fe': { global: true, desc: '打开编辑器视图', event: 'core:show-view', data: { plugin: 'editor' } } };
 
@@ -13,67 +13,28 @@ export const config = {
     size: { type: 'number', default: 12 },
     lineHeight: { type: 'number' },
   },
-  // Per-language entries from init.ts, keyed by Monaco language: a command and markers replace the defaults
-  // below, false turns the language off, and a language that is not named here keeps its default.
-  lsp: { type: 'object' },
-  // The keys this editor's normal mode answers to.
-  vim: { type: 'object' },
-};
-
-type LanguageServer = { commands: string[][]; markers: string[] };
-
-// The language servers this plugin knows, per Monaco language: what to run, and the files that mark the root
-// a server should index. A command carries its own arguments, since stdio is not every server's default.
-const typescript = { commands: [['typescript-language-server', '--stdio']], markers: ['tsconfig.json', 'jsconfig.json', 'package.json'] };
-const clangd = { commands: [['clangd']], markers: ['compile_commands.json', '.clangd', 'CMakeLists.txt'] };
-const languageServers: Record<string, LanguageServer> = {
-  typescript, javascript: typescript, typescriptreact: typescript, javascriptreact: typescript,
-  go: { commands: [['gopls']], markers: ['go.mod', 'go.work'] },
-  rust: { commands: [['rust-analyzer']], markers: ['Cargo.toml'] },
-  c: clangd, cpp: clangd,
-  python: { commands: [['pyright-langserver', '--stdio'], ['pylsp']], markers: ['pyproject.toml', 'setup.py', 'requirements.txt'] },
-  shell: { commands: [['bash-language-server', 'start']], markers: [] },
 };
 
 export function activate(context: MainContext) {
   const pending = new Set<AbortController>();
   const connections = new Set<MachineConnection>();
-  const sessions = new Map<string, { connection: MachineConnection; handle: Process }>();
-  const probes = new Map<string, Promise<{ command: string; path: string } | undefined>>();
-  const settings: Settings = context.host.config;
+  const probes = new Map<string, Promise<string | undefined>>();
 
-  // A daemon started by the app does not inherit a login shell's PATH, so a server is looked up and started with
-  // the PATH a login shell would have: the absolute path finds the program, and the PATH is what the program
-  // itself resolves its interpreter with.
-  const locate = async (connection: MachineConnection, machine: FileClick['machine'], candidates: string[][], cwd: string) => {
-    for (const [command, ...args] of candidates) {
-      const key = `${machineKey(machine)}|${command}`;
-      let probe = probes.get(key);
-      if (!probe) {
-        probe = connection.subprocess
-          .exec('/bin/sh', ['-c', 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; printf "%s\\n" "$PATH"; command -v "$1"', 'sh', command], { cwd })
-          .then(({ stdout, code }) => {
-            const [path, found] = Buffer.from(stdout).toString('utf8').trim().split('\n');
-            return code === 0 && found ? { command: found, path } : undefined;
-          }, () => undefined);
-        probes.set(key, probe);
-      }
-      const found = await probe;
-      if (found) return { ...found, args };
+  // A daemon started by the app does not inherit a login shell's PATH, so rg is looked up the way a login shell would
+  // find it: the absolute path it prints is what runs.
+  const locateRg = async (connection: MachineConnection, machine: FileClick['machine'], cwd: string) => {
+    const key = machineKey(machine);
+    let probe = probes.get(key);
+    if (!probe) {
+      probe = connection.subprocess
+        .exec('/bin/sh', ['-c', 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; command -v rg'], { cwd })
+        .then(({ stdout, code }) => {
+          const found = Buffer.from(stdout).toString('utf8').trim();
+          return code === 0 && found ? found : undefined;
+        }, () => undefined);
+      probes.set(key, probe);
     }
-    return undefined;
-  };
-
-  // The nearest ancestor holding a marker of this language or the repository root, and the directory itself
-  // when neither marks one.
-  const findRoot = async (connection: MachineConnection, directory: string, markers: string[]) => {
-    const names = ['.git', ...markers];
-    for (let current = directory; ; ) {
-      for (const name of names) if (await connection.fs.stat(posix.join(current, name))) return current;
-      const parent = posix.dirname(current);
-      if (parent === current) return directory;
-      current = parent;
-    }
+    return probe;
   };
 
   // One line of `rg --json` output: what kind of event it is — a match among others — the path it was found in, the line
@@ -86,24 +47,14 @@ export function activate(context: MainContext) {
   // answer from being a repository's worth of paths.
   const pathCeiling = 20000;
 
-  // A rg run over a connection, looked up the way a language server is: the daemon's own PATH may not hold it.
   const rg = async (connection: MachineConnection, machine: FileClick['machine'], cwd: string, args: string[]) => {
-    const located = await locate(connection, machine, [['rg']], cwd);
-    if (!located) throw new Error('未找到 rg 命令，无法搜索');
-    return connection.subprocess.exec(located.command, args, { cwd, env: { PATH: located.path } });
+    const command = await locateRg(connection, machine, cwd);
+    if (!command) throw new Error('未找到 rg 命令，无法搜索');
+    return connection.subprocess.exec(command, args, { cwd });
   };
 
-  // The server a language runs here: the built-in one, with whatever init.ts says about that language on top.
-  const serverFor = (language: string): LanguageServer | undefined => {
-    const override = settings.lsp?.[language];
-    if (override === false) return undefined;
-    const builtin = languageServers[language];
-    const commands = override?.command ? [override.command] : builtin?.commands;
-    return commands && { commands, markers: override?.markers ?? builtin?.markers ?? [] };
-  };
-
-  // One request runs on its own connection to a machine, closed again at the end unless the body keeps it: a
-  // language server outlives the request that started it.
+  // One request runs on its own connection to a machine, closed again at the end unless the body keeps it: a watch
+  // outlives the request that asked for it.
   const withConnection = async <T>(machine: FileClick['machine'], body: (connection: MachineConnection, keep: () => void) => Promise<T>): Promise<T> => {
     const controller = new AbortController();
     pending.add(controller);
@@ -211,62 +162,10 @@ export function activate(context: MainContext) {
       writeFileSync(`${historyPath}.tmp`, JSON.stringify(history, null, 2));
       renameSync(`${historyPath}.tmp`, historyPath);
     }),
-    // One server serves every file of its language and root that this window opens.
-    context.ui.handle('lsp-open', ({ machine, path, language }: { machine: FileClick['machine']; path: string; language: string }) =>
-      withConnection(machine, async (connection, keep) => {
-        const spec = serverFor(language);
-        if (!spec) return null;
-        const directory = posix.dirname(path);
-        const located = await locate(connection, machine, spec.commands, directory);
-        if (!located) throw new Error(`未找到 ${spec.commands.map(([command]) => command).join(' / ')}`);
-        const root = await findRoot(connection, directory, spec.markers);
-        const name = posix.basename(located.command);
-        const session = `${machineKey(machine)}|${language}|${root}`;
-        const running = sessions.get(session);
-        if (running) return { session, server: name, root };
-        const info = await connection.subprocess.spawn(located.command, located.args, { cwd: root, env: { PATH: located.path } });
-        const handle = await connection.subprocess.attach(info.id);
-        keep();
-        sessions.set(session, { connection, handle });
-        handle.onData(({ stream, data }) => {
-          if (stream === 'stdout') context.ui.publish('lsp-data', { session, data: Buffer.from(data).toString('base64') });
-          else context.ui.publish('lsp-log', { session, text: Buffer.from(data).toString('utf8').trimEnd() });
-        });
-        handle.onExit((code) => {
-          // A session that a restart has already replaced belongs to the new process, so its exit is not the
-          // window's to hear about.
-          if (sessions.get(session)?.handle.id === handle.id) {
-            sessions.delete(session);
-            context.ui.publish('lsp-exit', { session, code });
-          }
-          connection.disconnect();
-          connections.delete(connection);
-        });
-        return { session, server: name, root };
-      })),
-    context.ui.handle('lsp-write', async ({ session, data }: LspData) => {
-      const running = sessions.get(session);
-      if (!running) throw new Error('语言服务已关闭');
-      await running.handle.write(Buffer.from(data, 'base64'));
-    }),
-    // Closing is asked for by the status dot's restart, by a tab that leaves no file needing the server, and by
-    // a write the node would not take. The process is closed here and no exit event goes out: the window that
-    // asked has dropped its own session.
-    context.ui.handle('lsp-close', async ({ session }: { session: string }) => {
-      const running = sessions.get(session);
-      if (!running) return;
-      sessions.delete(session);
-      connections.delete(running.connection);
-      await running.connection.subprocess.close(running.handle.id).catch(() => {});
-      running.connection.disconnect();
-    }),
   );
   return async () => {
     for (const remove of handlers) remove();
     for (const controller of pending) controller.abort();
-    // Closing the server first, so nothing is left running on the machine once the window is gone.
-    await Promise.all([...sessions.values()].map((session) => session.connection.subprocess.close(session.handle.id).catch(() => {})));
-    sessions.clear();
     for (const connection of connections) connection.disconnect();
   };
 }

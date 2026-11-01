@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { createWorkspace, until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { alert, backButton, clickFile, codeView, collectErrors, drawnCloseButtons, editorLines, editorPanels, editorTab, forwardButton, goToPath, lists, machine, openEditorWorkspace, openWorkspaces, pathBox, refreshButton, shownPanel, storedHistory, viewMenu, waitForLine, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
+const { alert, backButton, clickFile, codeView, collectErrors, drawnCloseButtons, drawnLines, editorLines, editorPanels, editorTab, forwardButton, goToPath, lists, machine, openEditorWorkspace, openWorkspaces, pathBox, refreshButton, shownPanel, storedHistory, viewMenu, waitForLine, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
 
 test('a file link opens as its text, and a path that cannot be read says so', { timeout: 180000 }, () => withWindow('wangcai-editor-open', lists, async ({ home, page, errors }) => {
   const code = join(home, 'sample.ts');
@@ -48,9 +48,8 @@ test('a file is shown again where it was left', { timeout: 120000 }, () => withW
   await waitForLine(page, 'export const other = 1;');
   await backButton(page).click();
   await waitForPath(page, long);
-  // The editor comes back where it was left rather than at its top: the first line drawn is far into the file.
-  // Monaco pads what it draws with no-break spaces, which are read as spaces here.
-  await until(async () => /^const line3\d\d =/.test((await editorLines(page).innerText()).replace(/\u00a0/g, ' ').split('\n')[0]));
+  // The editor comes back where it was left rather than at its top: what it draws is far into the file.
+  await until(async () => (await drawnLines(page)).some((line) => /^const line3\d\d =/.test(line)));
   assert.deepEqual(errors, []);
 }));
 

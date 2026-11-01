@@ -5,23 +5,19 @@ const { join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { codeView, dismissSearch, editorFocused, filesEmpty, goToPath, lists, openEditorWorkspace, openSearch, pathBox, search, searchInput, searchMarks, searchNote, searchPanel, searchRow, searchRows, submitSearch, waitForLine, waitForPath } = require('./editor-ui.cjs');
 
-test('the search box finds files, text and symbols, and Enter opens what it found', { timeout: 120000 }, () => withWindow('wangcai-editor-search', lists, async ({ home, page, errors }) => {
+test('the search box finds files and text, and Enter opens what it found', { timeout: 120000 }, () => withWindow('wangcai-editor-search', lists, async ({ home, page, errors }) => {
   const main = join(home, 'main.ts');
   const nested = join(home, 'nested-name.ts');
-  writeFileSync(join(home, 'tsconfig.json'), '{"compilerOptions":{"strict":true}}\n');
   writeFileSync(join(home, 'answer.ts'), 'export const answer = 42;\n');
   writeFileSync(main, [
     'import { answer } from "./answer";',
     'const GREP_TARGET = answer;',
-    'export function computeTotal() {',
-    '  return GREP_TARGET;',
-    '}',
     '',
   ].join('\n'));
   writeFileSync(nested, 'export const nested = 1;\n');
   await openEditorWorkspace(page);
   await goToPath(page, main);
-  await codeView(page, 'computeTotal').waitFor();
+  await codeView(page, 'GREP_TARGET').waitFor();
   // A name is looked for under the workspace's own directory, and Enter opens the file it names.
   await openSearch(page);
   // Nothing is chosen yet: the list marks the row of the entry the tab is on, and the page stays on it.
@@ -55,20 +51,6 @@ test('the search box finds files, text and symbols, and Enter opens what it foun
   await waitForPath(page, main);
   await waitForLine(page, 'const GREP_TARGET = answer;');
   await submitSearch(page);
-
-  // A leading @ asks the file's language server for its symbols.
-  await search(page, '@compute');
-  await waitForLine(page, 'export function computeTotal() {');
-  await submitSearch(page);
-  await waitForPath(page, main);
-
-  // A grep that was still running when the picker switched to symbols leaves no message of its own behind.
-  await openSearch(page);
-  await searchInput(page).fill('>computeTotal');
-  await searchInput(page).fill('@compute');
-  await searchRow(page, 'computeTotal').waitFor();
-  assert.equal(await searchNote(page).count(), 0);
-  await dismissSearch(page);
 
   // The picker is opened again from the header, and Escape leaves without moving the page.
   await openSearch(page);
