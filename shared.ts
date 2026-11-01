@@ -15,12 +15,6 @@ export type LspExit = { session: string; code?: number };
 // A search's rows: a match in a file's text, at the line and column the row jumps to.
 export type SearchHit = { path: string; line: number; column: number; text: string };
 
-// One hunk of a file's diff against the index: where it starts in the index and in the file on disk, and the lines the
-// patch prints. A 'context' line is one the change left alone.
-export type GitHunk = { oldStart: number; newStart: number; lines: { kind: 'context' | 'removed' | 'added'; text: string }[] };
-// What the editor reads for its gutter: the repository root the marks belong to, and the hunks they are drawn from.
-export type GitLines = { root: string; hunks: GitHunk[] };
-
 // The identity of a machine: the id, plus the host that tells two machines with one id apart.
 export const machineKey = (machine: FileClick['machine']) => `${machine.id}|${machine.host ?? ''}`;
 

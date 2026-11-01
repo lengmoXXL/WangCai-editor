@@ -13,7 +13,7 @@
 .editor-path:focus { color: var(--wc-foreground); background: var(--wc-overlay); border-color: var(--wc-accent); outline: none; }
 .editor .menu-backdrop { position: fixed; inset: 0; z-index: 5; -webkit-app-region: no-drag; }
 .editor-lsp-wrap { position: relative; flex-shrink: 0; }
-.editor-lsp-detail, .code-menu, .git-peek { background: var(--wc-background); border: 1px solid var(--wc-border); border-radius: 5px; box-shadow: 0 10px 28px #0006; }
+.editor-lsp-detail, .code-menu { background: var(--wc-background); border: 1px solid var(--wc-border); border-radius: 5px; box-shadow: 0 10px 28px #0006; }
 .editor-lsp-detail { position: absolute; top: calc(100% + 5px); right: 0; z-index: 6; display: grid; gap: 3px; min-width: 160px; max-width: 320px; padding: 6px 8px; font-size: 11px; line-height: 1.4; color: var(--wc-muted); }
 .editor-lsp-name { color: var(--wc-foreground); }
 .editor-lsp-detail span { overflow-wrap: anywhere; }
@@ -49,16 +49,3 @@
 .search-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-row b { color: var(--wc-accent); font-weight: 600; }
 .search-detail { flex-shrink: 0; max-width: 60%; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--wc-muted); }
-
-/* VS Code's gutter: a bar for a changed line, a triangle where lines went away. */
-.git-line-added { border-left: 3px solid var(--wc-green); }
-.git-line-modified { border-left: 3px solid var(--wc-blue); }
-.git-line-deleted::before { content: ''; position: absolute; left: 3px; top: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--wc-red); }
-
-/* A menu opens over the page this covers, so the peek sits under menus and their backdrop. */
-.git-peek { position: fixed; z-index: 4; display: flex; flex-direction: column; overflow: hidden; }
-.git-peek-head { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 8px; color: var(--wc-muted); font-size: 11px; border-bottom: 1px solid var(--wc-border); }
-.git-peek-head button { flex-shrink: 0; width: 18px; height: 18px; margin-left: auto; padding: 0; font: inherit; color: inherit; background: transparent; border: 0; border-radius: 3px; cursor: pointer; }
-.git-peek-head button:hover { color: var(--wc-foreground); background: var(--wc-overlay); }
-.git-peek-head button:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: -2px; }
-.git-peek-body { min-height: 0; }

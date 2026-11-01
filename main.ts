@@ -2,7 +2,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import type { MachineConnection, Process } from '@lengmoxxl/sdk';
 import type { MainContext } from '@lengmoxxl/sdk/channel';
-import { machineKey, type FileClick, type GitHunk, type GitLines, type History, type LspData, type SearchHit, type Settings } from './shared';
+import { machineKey, type FileClick, type History, type LspData, type SearchHit, type Settings } from './shared';
 
 export const keys = { '<leader>fe': { global: true, desc: '打开编辑器视图', event: 'core:show-view', data: { plugin: 'editor' } } };
 
@@ -34,24 +34,6 @@ const languageServers: Record<string, LanguageServer> = {
   python: { commands: [['pyright-langserver', '--stdio'], ['pylsp']], markers: ['pyproject.toml', 'setup.py', 'requirements.txt'] },
   shell: { commands: [['bash-language-server', 'start']], markers: [] },
 };
-
-function readHunks(patch: string): GitHunk[] {
-  const hunks: GitHunk[] = [];
-  for (const line of patch.split('\n')) {
-    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-    if (header) { hunks.push({ oldStart: Number(header[1]), newStart: Number(header[2]), lines: [] }); continue; }
-    const hunk = hunks[hunks.length - 1];
-    if (!hunk) continue;
-    if (line.startsWith('+')) hunk.lines.push({ kind: 'added', text: line.slice(1) });
-    else if (line.startsWith('-')) hunk.lines.push({ kind: 'removed', text: line.slice(1) });
-    else if (line.startsWith(' ')) hunk.lines.push({ kind: 'context', text: line.slice(1) });
-  }
-  return hunks;
-}
-
-// A git run over a connection, with the index lock off so reading never takes the lock a writer wants.
-const git = (connection: MachineConnection, cwd: string, args: string[]) =>
-  connection.subprocess.exec('git', args, { cwd, env: { GIT_OPTIONAL_LOCKS: '0' } });
 
 export function activate(context: MainContext) {
   const pending = new Set<AbortController>();
@@ -155,27 +137,6 @@ export function activate(context: MainContext) {
       catch { throw new Error('暂不支持二进制或非 UTF-8 文件'); }
       if (/[\x00-\x08\x0b\x0e-\x1f]/.test(text)) throw new Error('暂不支持二进制文件');
       return text;
-    })));
-
-  // The lines a file's uncommitted changes added or removed: VS Code's gutter compares the working tree with the
-  // index, so a staged change takes its marks away.
-  handlers.push(context.ui.handle('git-lines', ({ machine, path }: { machine: FileClick['machine']; path: string }) =>
-    withConnection(machine, async (connection): Promise<GitLines | null> => {
-      try {
-        const top = await git(connection, posix.dirname(path), ['rev-parse', '--show-toplevel']);
-        if (top.code !== 0) return null;
-        const root = Buffer.from(top.stdout).toString('utf8').trim();
-        if (!path.startsWith(`${root}/`)) return null;
-        const relative = path.slice(root.length + 1);
-        // A file git does not track has no index version for the lines to be compared with.
-        if ((await git(connection, root, ['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', relative])).code !== 0) return null;
-        const patch = await git(connection, root, ['--literal-pathspecs', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '-U3', '--', relative]);
-        if (patch.code !== 0) return null;
-        return { root, hunks: readHunks(Buffer.from(patch.stdout).toString('utf8')) };
-      } catch {
-        // A machine without git, or a file outside any repository, is a page without gutter marks rather than an error.
-        return null;
-      }
     })));
 
   // The paths a file search offers: what rg lists under a workspace, which leaves out what git ignores.

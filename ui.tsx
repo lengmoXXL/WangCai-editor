@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createRoot } from 'react-dom/client';
 import fuzzysort, { type KeysResult } from 'fuzzysort';
 import * as monaco from 'monaco-editor/editor/editor.api.js';
@@ -15,7 +15,7 @@ import type { Theme, WorkspaceActive } from '@lengmoxxl/sdk';
 import type { TabRecord, UiContext } from '@lengmoxxl/sdk/channel';
 import { LanguageServices, buffer, languageFor, ownProviders, type FileSymbol } from './lsp';
 import { previewCommand, vimCommand, vimKeys } from './vim';
-import { machineKey, type FileClick, type Font, type GitHunk, type GitLines, type History, type HistoryEntry, type Position, type SearchHit, type Settings, type VimKeys } from './shared';
+import { machineKey, type FileClick, type Font, type History, type HistoryEntry, type Position, type SearchHit, type Settings, type VimKeys } from './shared';
 import './style.css';
 
 // What the tab is called, and the id the window remembers it by when it opens it again.
@@ -126,125 +126,16 @@ const lspActions = [
   { method: ownProviders.referencesProvider, action: 'editor.action.referenceSearch.trigger', label: '查找引用' },
 ];
 
-// A gutter mark, carrying the hunk a click on it opens.
-type GitMark = { line: number; kind: 'added' | 'modified' | 'deleted'; hunk: GitHunk };
-
-// The gutter states a diff implies: removed lines paired with added ones read as a modification, and whatever is left
-// over is an addition, or a deletion marked on the line that now follows it.
-function lineStates(hunks: GitHunk[], lineCount: number) {
-  const states: GitMark[] = [];
-  for (const hunk of hunks) {
-    let line = hunk.newStart;
-    let block: { start: number; removed: number; added: number } | undefined;
-    const flush = () => {
-      if (!block) return;
-      const paired = Math.min(block.removed, block.added);
-      for (let index = 0; index < paired; index++) states.push({ line: block.start + index, kind: 'modified', hunk });
-      for (let index = paired; index < block.added; index++) states.push({ line: block.start + index, kind: 'added', hunk });
-      if (block.removed > block.added) states.push({ line: Math.min(block.start + block.added, lineCount), kind: 'deleted', hunk });
-      block = undefined;
-    };
-    for (const { kind } of hunk.lines) {
-      if (kind === 'context') { flush(); line++; }
-      else {
-        if (!block) block = { start: line, removed: 0, added: 0 };
-        if (kind === 'removed') block.removed++;
-        else { block.added++; line++; }
-      }
-    }
-    flush();
-  }
-  return states;
-}
-
-const gitLineLabels = { added: '已新增', modified: '已修改', deleted: '已删除' };
-
-// The block a gutter mark stands for: its own lines diffed in a peek, the way a language server's jump opens one.
-function DiffPeek({ path, change, area, rowTop, close }: { path: string; change: GitMark; area: DOMRect; rowTop: number; close: () => void }) {
-  const shell = useRef<HTMLDivElement>(null);
-  const content = useRef<HTMLDivElement>(null);
-  // A row is only as tall as the editor makes it, so the block is built before the first paint.
-  useLayoutEffect(() => {
-    const language = languageFor(path);
-    const original = monaco.editor.createModel(change.hunk.lines.filter(({ kind }) => kind !== 'added').map(({ text }) => text).join('\n'), language);
-    const modified = monaco.editor.createModel(change.hunk.lines.filter(({ kind }) => kind !== 'removed').map(({ text }) => text).join('\n'), language);
-    const editor = monaco.editor.createDiffEditor(content.current!, {
-      readOnly: true, renderSideBySide: false, minimap: { enabled: false }, renderOverviewRuler: false,
-      scrollBeyondLastLine: false, automaticLayout: true, theme: 'wangcai',
-      fontSize: font.size, fontFamily: font.family, lineHeight: editorLineHeight,
-    });
-    editor.setModel({ original, modified });
-    // The peek prints a hunk rather than the whole file, so both sides count from the line each one starts at.
-    editor.getOriginalEditor().updateOptions({ lineNumbers: (line) => String(change.hunk.oldStart + line - 1) });
-    editor.getModifiedEditor().updateOptions({ lineNumbers: (line) => String(change.hunk.newStart + line - 1) });
-    // An inline diff gives every line of the hunk a row, and a block taller than the page scrolls inside the peek.
-    const body = content.current!;
-    body.style.height = `${change.hunk.lines.length * editor.getModifiedEditor().getOption(monaco.editor.EditorOption.lineHeight)}px`;
-    return () => {
-      editor.dispose();
-      original.dispose();
-      modified.dispose();
-    };
-  }, [change, path]);
-  // A new area moves the peek, and the block it shows is left as it is.
-  useLayoutEffect(() => {
-    const panel = shell.current!;
-    // A row with no room left below it rides the peek up rather than past the page's bottom edge.
-    panel.style.top = `${Math.max(area.top, Math.min(rowTop, area.bottom - panel.offsetHeight))}px`;
-  }, [area, rowTop]);
-  // The peek takes the page's own box, which is what lines it up with this editor edge to edge.
-  return <div className="git-peek" ref={shell} role="dialog" aria-label="行变更" style={{ left: area.left, width: area.width, maxHeight: area.height }}>
-    <div className="git-peek-head">
-      <span>{gitLineLabels[change.kind]} · 第 {change.line} 行</span>
-      <button type="button" aria-label="关闭行变更" title="关闭" onClick={close}>×</button>
-    </div>
-    <div className="git-peek-body" ref={content} />
-  </div>;
-}
-
-function EditorPage({ file, text, hunks, navigate, onModel, remember, peeking, jumps, openSearch, previewFile }: { file: HistoryEntry; text: string; hunks: GitHunk[]; navigate: (file: FileClick) => void; onModel: (model?: monaco.editor.ITextModel) => void; remember: Remember; peeking: boolean; jumps: Jumps; openSearch: () => void; previewFile: (entry: FileClick) => void }) {
+function EditorPage({ file, text, navigate, onModel, remember, peeking, jumps, openSearch, previewFile }: { file: HistoryEntry; text: string; navigate: (file: FileClick) => void; onModel: (model?: monaco.editor.ITextModel) => void; remember: Remember; peeking: boolean; jumps: Jumps; openSearch: () => void; previewFile: (entry: FileClick) => void }) {
   const element = useRef<HTMLDivElement>(null);
   const control = useRef<monaco.editor.IStandaloneCodeEditor | undefined>(undefined);
-  // The marks of the decorations on screen, which is what a gutter click resolves against.
-  const marks = useRef<GitMark[]>([]);
   // The entry the editor shows now: the editor outlives the entry it was built for, so what its callbacks record is
   // read from here. The ref is updated after the commit, before the effects below can record through it.
   const shown = useRef(file);
   useEffect(() => { shown.current = file; });
   const [menu, setMenu] = useState<{ x: number; y: number; actions: typeof lspActions }>();
-  const [peek, setPeek] = useState<{ area: DOMRect; rowTop: number; change: GitMark }>();
   // A layer over the editor takes the caret with it, so closing one hands the caret back.
   const closeMenu = () => { setMenu(undefined); control.current?.focus(); };
-  const closePeek = () => { setPeek(undefined); control.current?.focus(); };
-  // A line's offset is a content coordinate, so the page's own top and the current scroll are what turn it into a
-  // viewport one.
-  const placePeek = (change: GitMark) => {
-    const editor = control.current!;
-    const area = element.current!.getBoundingClientRect();
-    return { area, rowTop: area.top + editor.getTopForLineNumber(change.line) - editor.getScrollTop() };
-  };
-  useEffect(() => {
-    if (!peek) return;
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') closePeek(); };
-    addEventListener('keydown', escape);
-    return () => removeEventListener('keydown', escape);
-  }, [peek?.change]);
-  // The page resizes with the window, and the peek covers it, so the peek is placed again whenever it does.
-  useEffect(() => {
-    if (!peek) return;
-    const observer = new ResizeObserver(() => setPeek((current) => current && { ...placePeek(current.change), change: current.change }));
-    observer.observe(element.current!);
-    return () => observer.disconnect();
-  }, [peek?.change]);
-  // The peek shows one block of the code view, so it goes when that block is gone, has changed, or the code view is
-  // left. A repository event elsewhere only reads the marks again, so the block on show is compared by content and an
-  // unchanged one keeps its peek open.
-  useEffect(() => {
-    if (!peek) return;
-    const peeked = JSON.stringify(peek.change.hunk);
-    if (hunks.some((hunk) => JSON.stringify(hunk) === peeked)) return;
-    setPeek(undefined);
-  }, [hunks]);
   // The editor is built again when the text changes, and never for a jump: a jump moves the same editor, so the
   // language server keeps the model it already synchronizes.
   useEffect(() => {
@@ -314,14 +205,6 @@ function EditorPage({ file, text, hunks, navigate, onModel, remember, peeking, j
       keys: vimSettings, jumpBack: () => walk(-1), jumpForward: () => walk(1), definition, search: openSearch,
       preview: () => previewFile(shown.current), copy: (text) => void navigator.clipboard.writeText(text).catch(() => undefined),
     });
-    const opened = editor.onMouseDown((event) => {
-      // A click on a gutter mark opens the block it stands for.
-      if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS) return;
-      const change = marks.current.find((mark) => mark.line === event.target.position?.lineNumber);
-      if (!change) return;
-      event.event.preventDefault();
-      setPeek({ ...placePeek(change), change });
-    });
     void services?.open({ machine: file.machine, path: file.path, language, model, navigate });
     const host = element.current!;
     // A right click asks this plugin's menu instead of the browser's.
@@ -342,7 +225,7 @@ function EditorPage({ file, text, hunks, navigate, onModel, remember, peeking, j
     return () => {
       host.removeEventListener('contextmenu', openMenu);
       control.current = undefined;
-      scrolled.dispose(); moved.dispose(); opened.dispose(); vim.dispose(); editor.dispose(); onModel(undefined);
+      scrolled.dispose(); moved.dispose(); vim.dispose(); editor.dispose(); onModel(undefined);
     };
   }, [text, remember]);
   // The keyboard belongs in the editor, unless the page is only showing what a picker's selection stands for, where
@@ -383,19 +266,6 @@ function EditorPage({ file, text, hunks, navigate, onModel, remember, peeking, j
     const laidOut = editor.onDidLayoutChange(() => { if (place()) laidOut.dispose(); });
     return () => laidOut.dispose();
   }, [file.line, file.column, text]);
-  // Git can report new marks without the text changing, so they are applied whenever the read returns them.
-  useEffect(() => {
-    const editor = control.current;
-    const model = editor?.getModel();
-    if (!editor || !model) return;
-    // A decoration carries a class name rather than the change behind it, so the marks are kept for the click to find.
-    marks.current = lineStates(hunks, model.getLineCount());
-    const decoration = editor.createDecorationsCollection(marks.current.map(({ line, kind }) => ({
-      range: new monaco.Range(line, 1, line, 1),
-      options: { linesDecorationsClassName: `git-line-${kind}` },
-    })));
-    return () => decoration.clear();
-  }, [hunks, text]);
   return <>
     <div className="editor-code" ref={element} />
     {menu && <>
@@ -411,7 +281,6 @@ function EditorPage({ file, text, hunks, navigate, onModel, remember, peeking, j
           }}>{label}</button>)}
       </div>
     </>}
-    {peek && <DiffPeek path={file.path} change={peek.change} area={peek.area} rowTop={peek.rowTop} close={closePeek} />}
   </>;
 }
 
@@ -427,31 +296,16 @@ function FileView(props: NavigationProps & { holder: string; remember: Remember;
   const { context, file, holder, navigate, refresh, back, forward, remember, peeking, jumps, openSearch } = props;
   const [text, setText] = useState<string>();
   const [error, setError] = useState('');
-  const [hunks, setHunks] = useState<GitHunk[]>([]);
   const [model, setModel] = useState<monaco.editor.ITextModel>();
   // A file is read again when the path it names changes, not when the cursor moves inside it.
   useEffect(() => {
     let alive = true;
-    let stop: () => void;
-    let repository = '';
-    setText(undefined); setError(''); setHunks([]);
+    setText(undefined); setError('');
     const read = () => {
       void context.ui.request<string>('read', file).then((text) => { if (alive) { setText(text); setError(''); } })
         .catch((error: Error) => { if (alive) setError(error.message); });
-      // The marks describe this text, so they are read with it.
-      void context.ui.request<GitLines | null>('git-lines', { machine: file.machine, path: file.path })
-        .then((lines) => {
-          if (!alive) return;
-          setHunks(lines?.hunks ?? []);
-          // A commit or a stage takes the marks away without touching the file, so the repository is watched too.
-          if (!lines || lines.root === repository) return;
-          repository = lines.root;
-          stop();
-          stop = watch(context, file.machine, holder, [file.path, `${repository}/.git`], read);
-        })
-        .catch(() => { if (alive) setHunks([]); });
     };
-    stop = watch(context, file.machine, holder, [file.path], read);
+    const stop = watch(context, file.machine, holder, [file.path], read);
     read();
     return () => { alive = false; stop(); };
   }, [context, holder, file.path]);
@@ -477,7 +331,7 @@ function FileView(props: NavigationProps & { holder: string; remember: Remember;
     </Navigation>
     {error ? <div className="file-message" role="alert">{error}</div>
       : text === undefined ? <div className="file-message">正在读取…</div>
-      : <EditorPage file={file} text={text} hunks={hunks} onModel={setModel} navigate={navigate} remember={remember} peeking={peeking} jumps={jumps} openSearch={openSearch} previewFile={previewFile} />}
+      : <EditorPage file={file} text={text} onModel={setModel} navigate={navigate} remember={remember} peeking={peeking} jumps={jumps} openSearch={openSearch} previewFile={previewFile} />}
   </Shell>;
 }
 
@@ -819,10 +673,6 @@ function editorTheme(theme: Theme): monaco.editor.IStandaloneThemeData {
       'editorWidget.background': theme.overlay,
       'editorWidget.border': theme.border,
       'editorGutter.background': theme.background,
-      'diffEditor.insertedLineBackground': alpha(theme.green, 0.12),
-      'diffEditor.removedLineBackground': alpha(theme.red, 0.12),
-      'diffEditor.insertedTextBackground': alpha(theme.green, 0.2),
-      'diffEditor.removedTextBackground': alpha(theme.red, 0.2),
       'scrollbarSlider.background': alpha(theme.muted, 0.25),
       'scrollbarSlider.hoverBackground': alpha(theme.muted, 0.4),
       'scrollbarSlider.activeBackground': alpha(theme.muted, 0.5),
