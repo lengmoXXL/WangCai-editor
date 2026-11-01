@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "paths": {
+      "monaco-lsp-client": [
+        "./node_modules/monaco-editor/esm/external/monaco-lsp-client/out/index"
+      ]
+    }
+  },
+  "include": [
+    "*.ts",
+    "*.tsx"
+  ]
+}
