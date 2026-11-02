@@ -91,7 +91,8 @@ export function activate(context: MainContext) {
   // it sits on with that line's text, and where in the line its hits start.
   type RgEvent = { type: string; data: { path?: { text: string }; line_number?: number; lines?: { text: string }; submatches?: { start: number }[] } };
 
-  // How many lines a grep answer carries: the page draws fewer than this, and whether more were found is all it hears.
+  // How many lines a grep answer carries: the page draws only the first rows of it, so this cap never shows itself; it keeps
+  // one answer from crossing the channel whole.
   const grepCeiling = 500;
   // How many paths a listing carries: the page ranks the whole list before it draws any of it, so this only keeps one
   // answer from being a repository's worth of paths.
@@ -196,7 +197,7 @@ export function activate(context: MainContext) {
       const listed = await rg(connection, machine, path, ['--files', '--color', 'never']);
       if (listed.code !== 0) throw new Error(Buffer.from(listed.stderr).toString('utf8').trim() || '文件列表读取失败');
       const files = Buffer.from(listed.stdout).toString('utf8').split('\n').filter(Boolean);
-      return { files: files.slice(0, pathCeiling).map((file) => posix.resolve(path, file)), truncated: files.length > pathCeiling };
+      return files.slice(0, pathCeiling).map((file) => posix.resolve(path, file));
     })));
 
   // A pattern's matches under a workspace, one row per line that holds it. rg is asked for JSON because a match then
@@ -219,7 +220,7 @@ export function activate(context: MainContext) {
           column: Buffer.from(text).subarray(0, start).toString('utf8').length + 1, text: text.trim(),
         });
       }
-      return { hits: hits.slice(0, grepCeiling), truncated: hits.length > grepCeiling };
+      return hits.slice(0, grepCeiling);
     })));
 
   // One watch set per tab: the window keeps a tab per workspace, and a tab that stops showing something must not stop

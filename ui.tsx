@@ -3,7 +3,7 @@ import { EditorView, drawSelection, highlightActiveLine, lineNumbers } from '@co
 import { Vim, vim } from '@replit/codemirror-vim';
 import { createRoot } from 'react-dom/client';
 import { useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import fuzzysort, { type KeysResult } from 'fuzzysort';
+import fuzzysort from 'fuzzysort';
 import type { WorkspaceActive } from '@lengmoxxl/sdk';
 import type { TabRecord, UiContext } from '@lengmoxxl/sdk/channel';
 import { LanguageServices, type FileSymbol, type LocationFeature, type ServiceStatus, type Target } from './lsp';
@@ -136,8 +136,8 @@ function Navigation({ context, file, navigate, refresh, back, forward, openSearc
       </button>
       <Address context={context} base={file} navigate={navigate} report={setError} />
       <LspStatus file={file} />
-      <button className="editor-icon" aria-label="搜索" title="搜索文件、内容与符号" onClick={openSearch}>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4" /><path d="m10 10 4 4" /></svg>
+      <button className="editor-icon" aria-label="搜索" title="搜索" onClick={openSearch}>
+        <Glass />
       </button>
     </Header>
     {error && <div className="file-message" role="alert">{error}</div>}
@@ -367,45 +367,66 @@ function FileView(props: NavigationProps & { holder: string; remember: Remember;
   </Shell>;
 }
 
-// How many rows the page draws of a search's answer, and the number the note about a cut list names.
+// How many rows the page draws of a search's answer.
 const rowLimit = 200;
-// How well a match has to score to be listed: a name or path with the query in a run scores .7 and up, letters
-// scattered across one score around .3. A row whose matched side stays under it is left out of either search below.
+// How well a match has to score to be listed: the query in a run scores .7 and up, its letters scattered around .3.
 const matchThreshold = 0.6;
 
-// What the picker looks for, and the character that asks for each: a file's name, a pattern in the workspace's text, or
-// a declaration in the file the tab is on.
+// What the picker looks for: a file's path, a pattern in the workspace's text, or a declaration in the file the tab is
+// on. The first character of the query says which.
 type SearchMode = 'files' | 'grep' | 'symbols';
-const searchLabels: Record<SearchMode, { hint: string; empty: string }> = {
-  files: { hint: '文件名', empty: '没有匹配的文件' },
-  grep: { hint: '内容', empty: '没有匹配的内容' },
-  symbols: { hint: '符号', empty: '没有匹配的符号' },
+const emptyMessage: Record<SearchMode, string> = {
+  files: '没有匹配的文件', grep: '没有匹配的内容', symbols: '没有匹配的符号',
 };
-// A row of the picker: what it says, and which of its characters the query matched, which the row marks.
+
+// A row of the picker: the texts it prints, the visit it stands for, and the characters a query marked in each — the
+// title's in `marks`, the detail's in `detailMarks`.
 type SearchRow = { key: string; title: string; detail?: string; target: FileClick; marks?: ReadonlyArray<number>; detailMarks?: ReadonlyArray<number> };
-// `shown` is the path the row prints. The query is matched against it as printed rather than against the file's own
-// path, so that a marked character lands on the character it matched.
-type FileRow = { shown: string; row: SearchRow };
+
+// The magnifier, drawn on the header's button and in the picker's row: one glyph, whose size and colour come from where it
+// is drawn.
+const Glass = ({ className }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4" /><path d="m10 10 4 4" /></svg>
+);
 
 // A text with the characters at those indexes marked, so a row shows why it is on the list. The indexes count UTF-16
-// code units, as fuzzysort reports them, so the text is split the same way rather than by code point; a text with
-// nothing marked is handed back whole, as one node rather than one per character.
+// code units, as fuzzysort reports them, and neighbouring ones share a node: a hit is one block behind the text it
+// matched, however far apart the hits of one match are, and a character spelled by two units, such as an emoji, stays in
+// one piece. A text with nothing marked is handed back whole.
 const marked = (text: string, marks?: ReadonlyArray<number>) => {
   if (!marks?.length) return text;
-  const at = new Set(marks);
-  return text.split('').map((letter, index) => (at.has(index) ? <b key={index}>{letter}</b> : letter));
+  const runs: [number, number][] = [];
+  for (const index of [...marks].sort((a, b) => a - b)) {
+    const last = runs[runs.length - 1];
+    if (last && last[1] === index) last[1] += 1;
+    else runs.push([index, index + 1]);
+  }
+  const parts: ReactNode[] = [];
+  let from = 0;
+  for (const [start, end] of runs) {
+    if (start > from) parts.push(text.slice(from, start));
+    parts.push(<b key={start}>{text.slice(start, end)}</b>);
+    from = end;
+  }
+  if (from < text.length) parts.push(text.slice(from));
+  return parts;
 };
 
-// The search picker: one input whose first character chooses what it looks for, and the rows it finds under it. The page
-// follows the row under the selection, so what a row stands for is seen before Enter opens it.
+// The path a row prints, with the directory the search started at taken off.
+const shownPath = (directory: string, path: string) => path.startsWith(`${directory}/`) ? path.slice(directory.length + 1) : path;
+
+// The search picker: the rows it finds under its input, with the page following the row under the selection, so what a row
+// stands for is seen before Enter opens it.
 function Search({ context, visited, workspace, peek, navigate, close }: { context: UiContext; visited: HistoryEntry; workspace: string; peek: (file: FileClick) => void; navigate: (file: FileClick) => void; close: () => void }) {
   const [query, setQuery] = useState('');
   // A row is chosen by the user or not at all: until one is, the selection marks the row of the entry the tab is on and
   // nothing is followed, so opening the picker does not take the reader away from what they were reading.
   const [chosen, setChosen] = useState<number>();
-  const [files, setFiles] = useState<{ paths: string[]; truncated: boolean }>();
-  const [matches, setMatches] = useState<{ hits: SearchHit[]; truncated: boolean }>({ hits: [], truncated: false });
-  const [symbols, setSymbols] = useState<FileSymbol[]>([]);
+  // Each source's latest answer, with `undefined` for having none to draw: none has arrived yet, or the query was emptied.
+  // An answer stays on show while the next one is on its way.
+  const [files, setFiles] = useState<string[]>();
+  const [matches, setMatches] = useState<SearchHit[]>();
+  const [symbols, setSymbols] = useState<FileSymbol[]>();
   // The message the picker shows, tagged with the source it speaks for: the search that wrote it may have been left
   // behind.
   const [status, setStatus] = useState<{ mode: SearchMode; text: string }>();
@@ -414,14 +435,14 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
   // Where a search starts: the workspace, or else the directory the tab's own entry sits in.
   const directory = workspace || visited.path.slice(0, visited.path.lastIndexOf('/')) || '/';
   const mode: SearchMode = query.startsWith('>') ? 'grep' : query.startsWith('@') ? 'symbols' : 'files';
-  const pattern = mode === 'files' ? query : query.slice(1);
+  const needle = (mode === 'files' ? query : query.slice(1)).trim();
   // What this picker asks a server about, which changes with the machine and path `serviceFor` reads.
   const options = useMemo(() => serviceFor(visited), [visited.machine, visited.path]);
   useEffect(() => {
     let alive = true;
-    void context.ui.request<{ files: string[]; truncated: boolean }>('find-files', { machine: visited.machine, path: directory })
-      .then((listed) => { if (alive) { setFiles({ paths: listed.files, truncated: listed.truncated }); clearStatus('files'); } })
-      .catch((problem: Error) => { if (alive) { setFiles({ paths: [], truncated: false }); setStatus({ mode: 'files', text: problem.message }); } });
+    void context.ui.request<string[]>('find-files', { machine: visited.machine, path: directory })
+      .then((listed) => { if (alive) { setFiles(listed); clearStatus('files'); } })
+      .catch((problem: Error) => { if (alive) { setFiles([]); setStatus({ mode: 'files', text: problem.message }); } });
     return () => { alive = false; };
   }, [context, visited.machine, directory]);
   // The symbols of the file the tab is on, which is the file a symbol row jumps into.
@@ -432,87 +453,62 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
     void services.symbols(options).then((found) => { if (alive) setSymbols(found); });
     return () => { alive = false; };
   }, [mode, options]);
-  // The answer that arrives for a pattern no longer in the input is dropped, since the rows on show belong to the current
-  // one.
   const asked = useRef(0);
   useEffect(() => {
-    if (mode !== 'grep') return;
-    const needle = pattern.trim();
-    if (!needle) { setMatches({ hits: [], truncated: false }); clearStatus('grep'); return; }
+    // A reply is worth only the query that asked for it: every run of this takes the next id, so a reply that comes back
+    // after the input moved on, to another pattern or out of grep or out of the input, is dropped.
     const id = ++asked.current;
+    if (mode !== 'grep') return;
+    if (!needle) { setMatches(undefined); clearStatus('grep'); return; }
     setStatus({ mode: 'grep', text: '正在搜索…' });
     // rg is asked once typing pauses: a key pressed mid-word would otherwise start a search for a pattern already gone.
     const timer = setTimeout(() => {
-      void context.ui.request<{ hits: SearchHit[]; truncated: boolean }>('grep', { machine: visited.machine, path: directory, query: needle })
+      void context.ui.request<SearchHit[]>('grep', { machine: visited.machine, path: directory, query: needle })
         .then((found) => {
           if (id !== asked.current) return;
-          setMatches({ hits: found.hits, truncated: found.truncated });
+          setMatches(found);
           clearStatus('grep');
         })
-        .catch((problem: Error) => { if (id !== asked.current) return; setMatches({ hits: [], truncated: false }); setStatus({ mode: 'grep', text: problem.message }); });
+        .catch((problem: Error) => { if (id !== asked.current) return; setMatches([]); setStatus({ mode: 'grep', text: problem.message }); });
     }, 150);
     return () => clearTimeout(timer);
-  }, [mode, pattern, context, visited.machine, directory]);
-  // The rows the page draws, and how many the source offered before the page kept its share. Every branch stops at the
-  // row limit.
-  const { rows, matched } = useMemo<{ rows: SearchRow[]; matched: number }>(() => {
-    const needle = pattern.trim();
+  }, [mode, needle, context, visited.machine, directory]);
+  const { rows, answered } = useMemo<{ rows: SearchRow[]; answered: boolean }>(() => {
     if (mode === 'grep') {
-      const candidates = matches.hits.map((hit) => ({
-        key: `${hit.path}:${hit.line}`, title: hit.text || ' ',
-        detail: `${hit.path.startsWith(`${directory}/`) ? hit.path.slice(directory.length + 1) : hit.path}:${hit.line}`,
-        target: visit(hit, visited.machine),
-      }));
-      return { rows: candidates.slice(0, rowLimit), matched: candidates.length };
+      return {
+        answered: matches !== undefined,
+        rows: (matches ?? []).map((hit) => ({
+          key: `${hit.path}:${hit.line}`, title: hit.text,
+          detail: `${shownPath(directory, hit.path)}:${hit.line}`,
+          target: visit(hit, visited.machine),
+        })).slice(0, rowLimit),
+      };
     }
-    if (mode === 'symbols') {
-      const candidates = symbols.map((symbol) => ({
-        key: `${symbol.line}:${symbol.column}`, title: symbol.name, detail: symbol.container,
-        target: visit({ path: visited.path, line: symbol.line, column: symbol.column }, visited.machine),
-      }));
-      const found = needle ? fuzzysort.go(needle, candidates, { keys: ['title', 'detail'], threshold: matchThreshold, limit: rowLimit }) : undefined;
-      const listed = found ? found.map((one) => ({ ...one.obj, marks: one[0].indexes })) : candidates;
-      return { rows: listed.slice(0, rowLimit), matched: found ? found.total : candidates.length };
-    }
-    const candidates = (files?.paths ?? []).map((path) => {
-      const name = path.slice(path.lastIndexOf('/') + 1);
-      const folder = path.startsWith(`${directory}/`) ? path.slice(directory.length + 1, path.length - name.length - 1) : path.slice(0, path.lastIndexOf('/'));
-      return { shown: folder ? `${folder}/${name}` : name, row: { key: path, title: name, detail: folder, target: { type: 'file' as const, machine: visited.machine, path } } };
-    });
-    if (!needle) return { rows: candidates.slice(0, rowLimit).map(({ row }) => row), matched: candidates.length };
-    // Which side of a row the query matched well enough to rank it and to mark it: the name, or else the path it sits
-    // on.
-    const byName = (one: KeysResult<FileRow>) => one[0].score >= matchThreshold;
-    // A name match lifts its row a tier above every row only its path matched: a path score cannot pass 1, so the 2
-    // puts it out of reach.
-    const found = fuzzysort.go(needle, candidates, {
-      keys: ['row.title', 'shown'], threshold: matchThreshold, limit: rowLimit,
-      // A shorter path settles a tie inside one tier. The floor only lifts a score that cleared the threshold, so the
-      // nudge cannot push a listed row out, and a weaker match keeps its own score.
-      scoreFn: (one) => {
-        const score = byName(one) ? 2 + one[0].score : one[1].score;
-        return score < matchThreshold ? score : Math.max(matchThreshold, score - one.obj.shown.length / 10000);
-      },
-    });
-    return {
-      rows: found.map((one) => {
-        if (byName(one)) return { ...one.obj.row, marks: one[0].indexes };
-        // A path match is marked on the side of the row it fell on: the folder, the name, or both when the query runs
-        // across the slash between them.
-        const detail = one.obj.row.detail ?? '';
-        const fromName = one.obj.shown.length - one.obj.row.title.length;
-        return {
-          ...one.obj.row,
-          detailMarks: one[1].indexes.filter((at) => at < detail.length),
-          marks: one[1].indexes.filter((at) => at >= fromName).map((at) => at - fromName),
-        };
-      }),
-      matched: found.total,
+    // The query is matched against the texts a row prints, in the order it prints them, so a marked character lands on the
+    // character it matched: the title, then the detail of the rows that have one.
+    const search = (candidates: SearchRow[]) => {
+      if (!needle) return candidates.slice(0, rowLimit);
+      const found = fuzzysort.go(needle, candidates, { keys: ['title', 'detail'], threshold: matchThreshold, limit: rowLimit });
+      return found.map((one) => ({ ...one.obj, marks: one[0].indexes, detailMarks: one[1]?.indexes }));
     };
-  }, [mode, pattern, directory, visited.machine, visited.path, files, matches, symbols]);
-  const cutBySource = mode === 'grep' ? matches.truncated : mode === 'symbols' ? false : files?.truncated ?? false;
-  const cut = matched > rowLimit || cutBySource;
-  const note = (status?.mode === mode ? status.text : '') || (cut ? `结果过多，只显示前 ${rowLimit} 条` : '');
+    if (mode === 'symbols') {
+      return {
+        answered: symbols !== undefined,
+        rows: search((symbols ?? []).map((symbol) => ({
+          key: `${symbol.line}:${symbol.column}`, title: symbol.name, detail: symbol.container,
+          target: visit({ path: visited.path, line: symbol.line, column: symbol.column }, visited.machine),
+        }))),
+      };
+    }
+    return {
+      answered: files !== undefined,
+      rows: search((files ?? []).map((path) => ({
+        key: path, title: shownPath(directory, path),
+        target: { type: 'file' as const, machine: visited.machine, path },
+      }))),
+    };
+  }, [mode, needle, directory, visited.machine, visited.path, files, matches, symbols]);
+  const note = status?.mode === mode ? status.text : '';
   // The index of the row standing for the entry the tab is on, if the rows hold it.
   const current = rows.findIndex((row) => row.target.path === visited.path && (row.target.line === undefined || row.target.line === visited.line));
   // Rows arrive after the keystroke that asked for them, so the chosen one is kept within what is on show.
@@ -528,8 +524,8 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
   }, [chosen, at, rows]);
   return <div className="search-panel" role="dialog" aria-label="搜索">
     <div className="search-head">
-      <span className="search-mode">{searchLabels[mode].hint}</span>
-      <input className="search-input" aria-label="搜索" autoFocus value={query} spellCheck={false} placeholder="文件名 · > 内容 · @ 符号"
+      <Glass className="search-glass" />
+      <input className="search-input" aria-label="搜索" autoFocus value={query} spellCheck={false} placeholder="搜索文件，> 搜内容，@ 列符号"
         onChange={(event) => { setQuery(event.target.value); setChosen(0); }}
         onKeyDown={(event) => {
           if (event.key === 'Escape') { event.preventDefault(); close(); }
@@ -539,13 +535,13 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
         }} />
       <button className="search-close" type="button" aria-label="关闭搜索" title="关闭" onClick={close}>×</button>
     </div>
-    {note && <div className="search-note">{note}</div>}
+    {note && <div className="search-note" role="status">{note}</div>}
     <div className="search-list" ref={list}>
       {rows.map((row, index) => <button key={row.key} type="button" className="search-row" aria-current={index === at || undefined} onClick={() => navigate(row.target)} onMouseEnter={() => setChosen(index)}>
         <span className="search-title">{marked(row.title, row.marks)}</span>
         {row.detail && <span className="search-detail">{marked(row.detail, row.detailMarks)}</span>}
       </button>)}
-      {!rows.length && <div className="file-message">{searchLabels[mode].empty}</div>}
+      {answered && !rows.length && !note && <div className="file-message">{emptyMessage[mode]}</div>}
     </div>
   </div>;
 }
@@ -566,8 +562,7 @@ function EmptyPage({ context, base, navigate, loading, error }: { context: UiCon
 
 // The page a tab draws: the file on show with the search picker over it, or the empty page while no file has been sent
 // here.
-// `file` is what the page shows, which a picker's selection may stand in for; `visited` is the entry the tab is on, which
-// the picker anchors to — the directory it searches in.
+// `file` is what the page shows, which a picker's selection may stand in for, and `visited` the entry the tab is on.
 function Body({ context, workspaceId, file, visited, searching, remember, closeSearch, peek, jumps, ...navigation }: Omit<NavigationProps, 'file'> & { workspaceId?: string; file?: HistoryEntry; visited?: HistoryEntry; searching: boolean; remember: Remember; closeSearch: () => void; peek: (file: FileClick) => void; jumps: Jumps }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');

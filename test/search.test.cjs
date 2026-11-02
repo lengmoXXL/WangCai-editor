@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { mkdirSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { codeView, dismissSearch, editorFocused, filesEmpty, landedOn, lists, openOn, openSearch, pathBox, search, searchInput, searchMarks, searchNote, searchPanel, searchRow, searchRows, shownPanel, submitSearch, waitForPath } = require('./editor-ui.cjs');
+const { codeView, dismissSearch, editorFocused, filesEmpty, landedOn, lists, openOn, openSearch, pathBox, search, searchInput, searchMarks, searchPanel, searchRow, searchRows, shownPanel, submitSearch, waitForPath } = require('./editor-ui.cjs');
 
 test('the search box finds files and text, and Enter opens what it found', { timeout: 120000 }, () => withWindow('wangcai-editor-search', lists, async ({ home, page, errors }) => {
   const main = join(home, 'main.ts');
@@ -16,9 +16,9 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   ].join('\n'));
   writeFileSync(nested, 'export const nested = 1;\n');
   await openOn(page, main, 'GREP_TARGET');
-  // A name is looked for under the workspace's own directory, and Enter opens the file it names.
+  // The list comes from the workspace's own directory, and nothing is chosen yet: the selection stands on the row of the
+  // entry the tab is on, and the page stays there.
   await openSearch(page);
-  // Nothing is chosen yet: the list marks the row of the entry the tab is on, and the page stays on it.
   const mainRow = searchRow(page, 'main.ts');
   await mainRow.waitFor();
   // Longer than the picker's rest before it follows a selection, so a page that was going to move has moved.
@@ -33,7 +33,7 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   const nestedRow = searchRow(page, 'nested-name.ts');
   await nestedRow.waitFor();
   // The row marks the letters it matched, so what put it on the list is visible.
-  assert.ok((await searchMarks(nestedRow)).title.length > 0);
+  assert.ok((await searchMarks(nestedRow)).length > 0);
   // The page above the picker follows the chosen row, so the file is there before Enter closes the picker.
   await waitForPath(shownPanel(page), nested);
   assert.equal(await searchPanel(page).count(), 1);
@@ -54,26 +54,27 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   await dismissSearch(page);
   assert.equal(await pathBox(shownPanel(page)).inputValue(), main);
 
-  // A folder is searched as the row prints it, and each side of the row marks what it matched: here the query runs
-  // through the folder into the name.
+  // A row is a whole path, and a query that runs through a folder into the name marks both on that one line.
   mkdirSync(join(home, 'deep/dir'), { recursive: true });
   writeFileSync(join(home, 'deep/dir/path-only.ts'), 'export const only = 1;\n');
   await search(page, 'dir/path');
   const pathRow = searchRow(page, 'path-only.ts');
   await pathRow.waitFor();
-  const pathMarks = await searchMarks(pathRow);
-  assert.deepEqual(pathMarks.detail, ['d', 'i', 'r'], 'dir is marked in the folder');
-  assert.deepEqual(pathMarks.title, ['p', 'a', 't', 'h'], 'path is marked in the name');
+  assert.deepEqual(await searchMarks(pathRow), ['dir/path']);
   await dismissSearch(page);
 
-  // A name holding a character outside the basic plane keeps its marks on the letters they belong to: the indexes count
-  // code units, so the emoji's two of them are not letters of their own.
+  // A name holding a character outside the basic plane still prints whole, and the letters after it are marked on their
+  // own.
   writeFileSync(join(home, '📁abc.ts'), 'export const emoji = 1;\n');
   await search(page, 'abc');
   const emojiRow = searchRow(page, 'abc.ts');
   await emojiRow.waitFor();
-  assert.deepEqual((await searchMarks(emojiRow)).title, ['a', 'b', 'c']);
+  assert.deepEqual(await searchMarks(emojiRow), ['abc']);
   assert.equal(await emojiRow.innerText(), '📁abc.ts');
+  await dismissSearch(page);
+  // A query that falls on that character marks both of its units as one run.
+  await search(page, '📁');
+  assert.deepEqual(await searchMarks(emojiRow), ['📁']);
   await dismissSearch(page);
 
   // Letters the query finds scattered score below what the page lists, so a weak query reports nothing rather than a
@@ -83,17 +84,14 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   await searchRows(page).first().waitFor();
   await searchInput(page).fill('nst');
   await filesEmpty(page).waitFor();
-  assert.equal(await searchRows(page).count(), 0);
   await dismissSearch(page);
 
-  // A grep answer longer than the page draws is cut where the note says it is: 25 files of 10 matching lines, and 200
-  // rows drawn.
+  // A grep answer longer than the page draws is cut at the row limit: 25 files of 10 matching lines, and 200 rows drawn.
   for (let index = 0; index < 25; index++) {
     writeFileSync(join(home, `hits${index}.txt`), Array.from({ length: 10 }, (_, line) => `HIT_${index}_${line}`).join('\n'));
   }
   await search(page, '>HIT_');
   assert.equal(await searchRows(page).count(), 200);
-  assert.match(await searchNote(page).innerText(), /200/);
   await dismissSearch(page);
   assert.deepEqual(errors, []);
 }));

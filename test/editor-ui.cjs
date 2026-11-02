@@ -127,22 +127,15 @@ const runIn = async (pane, line) => {
 // The menu a view is picked from, once that button has opened it.
 const viewMenu = (page) => page.locator('#view-menu');
 
-// The search picker a panel opens: the panel it draws in, the input a query goes into, the rows it found, the note it
-// shows, and the message a search for files shows when it finds none.
+// The search picker a panel opens: the panel it draws in, the input a query goes into, the rows it found, and the message
+// a search for files shows when it finds none.
 const searchPanel = (scope) => scope.getByRole('dialog', { name: '搜索' });
 const searchInput = (scope) => searchPanel(scope).getByRole('textbox', { name: '搜索' });
 const searchRows = (scope) => searchPanel(scope).locator('.search-row');
 const searchRow = (scope, text) => searchRows(scope).filter({ hasText: text }).first();
-const searchNote = (scope) => searchPanel(scope).locator('.search-note');
 const filesEmpty = (scope) => searchPanel(scope).getByText('没有匹配的文件', { exact: true });
-// What a row prints: its title, and the path beside it. Both take the scope to look in, which is the panel or one row.
-const searchTitle = (scope) => scope.locator('.search-title');
-const searchDetail = (scope) => scope.locator('.search-detail');
-// The characters the picker marked in a row: the ones the query matched in the title, and in the path beside it.
-const searchMarks = async (row) => ({
-  title: await searchTitle(row).locator('b').allInnerTexts(),
-  detail: await searchDetail(row).locator('b').allInnerTexts(),
-});
+// The runs of text the picker marked in the title of a row: neighbouring hits share a run, not one character each.
+const searchMarks = (row) => row.locator('.search-title b').allInnerTexts();
 
 // The picker opened from the panel's header, with nothing in it yet.
 const openSearch = async (scope) => {
@@ -245,7 +238,6 @@ module.exports = {
   searchInput,
   searchRows,
   searchRow,
-  searchNote,
   filesEmpty,
   searchMarks,
   openSearch,
