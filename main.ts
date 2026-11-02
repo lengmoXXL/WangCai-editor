@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
-import type { MachineConnection } from '@lengmoxxl/sdk';
+import type { MachineConnection, Process } from '@lengmoxxl/sdk';
 import type { MainContext } from '@lengmoxxl/sdk/channel';
-import { machineKey, type FileClick, type History, type SearchHit } from './shared';
+import { machineKey, type FileClick, type History, type LspClose, type LspData, type LspSession, type OpenOptions, type SearchHit, type Settings } from './shared';
 
 export const keys = { '<leader>fe': { global: true, desc: '打开编辑器视图', event: 'core:show-view', data: { plugin: 'editor' } } };
 
@@ -13,28 +13,78 @@ export const config = {
     size: { type: 'number', default: 12 },
     lineHeight: { type: 'number' },
   },
+  // Per-language entries from init.ts, keyed by the language this plugin reads a file as: a command or markers replaces
+  // that one default below, false turns the language off, and a language that is not named here keeps its defaults.
+  lsp: { type: 'object' },
+};
+
+type LanguageServer = { commands: string[][]; markers: string[] };
+
+// The language servers this plugin knows, per language: what to run, and the files that mark the root a server should
+// index. A command carries its own arguments, since stdio is not every server's default.
+const typescript = { commands: [['typescript-language-server', '--stdio']], markers: ['tsconfig.json', 'jsconfig.json', 'package.json'] };
+const clangd = { commands: [['clangd']], markers: ['compile_commands.json', '.clangd', 'CMakeLists.txt'] };
+const languageServers: Record<string, LanguageServer> = {
+  typescript: typescript, javascript: typescript, typescriptreact: typescript, javascriptreact: typescript,
+  go: { commands: [['gopls']], markers: ['go.mod', 'go.work'] },
+  rust: { commands: [['rust-analyzer']], markers: ['Cargo.toml'] },
+  c: clangd, cpp: clangd,
+  python: { commands: [['pyright-langserver', '--stdio'], ['pylsp']], markers: ['pyproject.toml', 'setup.py', 'requirements.txt'] },
+  shell: { commands: [['bash-language-server', 'start']], markers: [] },
 };
 
 export function activate(context: MainContext) {
   const pending = new Set<AbortController>();
   const connections = new Set<MachineConnection>();
-  const probes = new Map<string, Promise<string | undefined>>();
+  const sessions = new Map<string, { connection: MachineConnection; handle: Process }>();
+  // The servers being started now, so a view that shows the file again while one is on its way joins it rather than
+  // starting a second.
+  const starts = new Map<string, Promise<void>>();
+  // A program found on a machine, and the PATH a login shell would give it.
+  const probes = new Map<string, Promise<{ program: string; envPath: string } | undefined>>();
+  const settings: Settings = context.host.config;
 
-  // A daemon started by the app does not inherit a login shell's PATH, so rg is looked up the way a login shell would
-  // find it: the absolute path it prints is what runs.
-  const locateRg = async (connection: MachineConnection, machine: FileClick['machine'], cwd: string) => {
-    const key = machineKey(machine);
-    let probe = probes.get(key);
-    if (!probe) {
-      probe = connection.subprocess
-        .exec('/bin/sh', ['-c', 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; command -v rg'], { cwd })
-        .then(({ stdout, code }) => {
-          const found = Buffer.from(stdout).toString('utf8').trim();
-          return code === 0 && found ? found : undefined;
-        }, () => undefined);
-      probes.set(key, probe);
+  // A daemon started by the app does not inherit a login shell's PATH, so a program is looked up and started with the PATH
+  // a login shell would have: the absolute path finds the program, and that PATH is what the program itself resolves its
+  // interpreter with.
+  const locate = async (connection: MachineConnection, machine: FileClick['machine'], candidates: string[][], cwd: string) => {
+    for (const [program, ...args] of candidates) {
+      const key = `${machineKey(machine)}|${program}`;
+      let probe = probes.get(key);
+      if (!probe) {
+        probe = connection.subprocess
+          .exec('/bin/sh', ['-c', 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; printf "%s\\n" "$PATH"; command -v "$1"', 'sh', program], { cwd })
+          .then(({ stdout, code }) => {
+            const [envPath, found] = Buffer.from(stdout).toString('utf8').trim().split('\n');
+            return code === 0 && found ? { program: found, envPath } : undefined;
+          }, () => undefined);
+        probes.set(key, probe);
+      }
+      const found = await probe;
+      if (found) return { ...found, args };
     }
-    return probe;
+    return undefined;
+  };
+
+  // The nearest ancestor holding a marker of this language or the repository root, and the directory itself when
+  // neither marks one.
+  const findRoot = async (connection: MachineConnection, directory: string, markers: string[]) => {
+    const names = ['.git', ...markers];
+    for (let current = directory; ; ) {
+      for (const name of names) if (await connection.fs.stat(posix.join(current, name))) return current;
+      const parent = posix.dirname(current);
+      if (parent === current) return directory;
+      current = parent;
+    }
+  };
+
+  // The server a language runs here: the built-in one, with whatever init.ts says about that language on top.
+  const serverSpec = (language: string): LanguageServer | undefined => {
+    const override = settings.lsp?.[language];
+    if (override === false) return undefined;
+    const builtin = languageServers[language];
+    const commands = override?.command ? [override.command] : builtin?.commands;
+    return commands && { commands, markers: override?.markers ?? builtin?.markers ?? [] };
   };
 
   // One line of `rg --json` output: what kind of event it is — a match among others — the path it was found in, the line
@@ -48,13 +98,63 @@ export function activate(context: MainContext) {
   const pathCeiling = 20000;
 
   const rg = async (connection: MachineConnection, machine: FileClick['machine'], cwd: string, args: string[]) => {
-    const command = await locateRg(connection, machine, cwd);
-    if (!command) throw new Error('未找到 rg 命令，无法搜索');
-    return connection.subprocess.exec(command, args, { cwd });
+    const located = await locate(connection, machine, [['rg']], cwd);
+    if (!located) throw new Error('未找到 rg 命令，无法搜索');
+    return connection.subprocess.exec(located.program, args, { cwd });
+  };
+
+  // The server a language and root share, started on this connection or handed back from the one already running or on its
+  // way: two views that ask for a file at the same moment share one spawn.
+  const startServer = async (connection: MachineConnection, { machine, path, language }: OpenOptions, keep: () => void): Promise<LspSession | null> => {
+    const spec = serverSpec(language);
+    if (!spec) return null;
+    const directory = posix.dirname(path);
+    const located = await locate(connection, machine, spec.commands, directory);
+    if (!located) throw new Error(`未找到 ${spec.commands.map(([program]) => program).join(' / ')}`);
+    const root = await findRoot(connection, directory, spec.markers);
+    const name = posix.basename(located.program);
+    const session = `${machineKey(machine)}|${language}|${root}`;
+    let start = starts.get(session);
+    if (!sessions.has(session) && !start) {
+      start = (async () => {
+        const info = await connection.subprocess.spawn(located.program, located.args, { cwd: root, env: { PATH: located.envPath } });
+        const handle = await connection.subprocess.attach(info.id);
+        keep();
+        sessions.set(session, { connection, handle });
+        handle.onData(({ stream, data }) => {
+          if (stream === 'stdout') context.ui.publish('lsp-data', { session, data: Buffer.from(data).toString('base64') });
+          else context.ui.publish('lsp-log', { session, text: Buffer.from(data).toString('utf8').trimEnd() });
+        });
+        handle.onExit((code) => {
+          // A session a restart has already replaced belongs to the new process, so its exit is not the window's.
+          if (sessions.get(session)?.handle.id === handle.id) {
+            sessions.delete(session);
+            context.ui.publish('lsp-exit', { session, code });
+          }
+          connection.disconnect();
+          connections.delete(connection);
+        });
+      })();
+      starts.set(session, start);
+      const settle = () => starts.delete(session);
+      void start.then(settle, settle);
+    }
+    if (start) await start;
+    return { session, server: name, root };
+  };
+
+  // A server the window is done with: its process is closed, and the connection it ran on goes with it.
+  const closeServer = async (session: string) => {
+    const running = sessions.get(session);
+    if (!running) return;
+    sessions.delete(session);
+    connections.delete(running.connection);
+    await running.connection.subprocess.close(running.handle.id).catch(() => undefined);
+    running.connection.disconnect();
   };
 
   // One request runs on its own connection to a machine, closed again at the end unless the body keeps it: a watch
-  // outlives the request that asked for it.
+  // outlives the request that asked for it, and a server outlives the open that started it.
   const withConnection = async <T>(machine: FileClick['machine'], body: (connection: MachineConnection, keep: () => void) => Promise<T>): Promise<T> => {
     const controller = new AbortController();
     pending.add(controller);
@@ -155,6 +255,20 @@ export function activate(context: MainContext) {
     });
   }));
 
+  handlers.push(
+    context.ui.handle('lsp-open', (options: OpenOptions) =>
+      withConnection(options.machine, (connection, keep) => startServer(connection, options, keep))),
+    context.ui.handle('lsp-write', async ({ session, data }: LspData) => {
+      const running = sessions.get(session);
+      if (!running) throw new Error('语言服务已关闭');
+      await running.handle.write(Buffer.from(data, 'base64'));
+    }),
+    // The window asks for this whenever it stops wanting a server: a restart by hand, a revival retiring the one that went
+    // away, a tab that leaves no file needing it, or a view that left while its server was still starting. The process is
+    // closed here and no exit event goes out: the window that asked has already dropped its own session.
+    context.ui.handle('lsp-close', ({ session }: LspClose) => closeServer(session)),
+  );
+
   const historyPath = join(context.host.dataDirectory, 'history.json');
   handlers.push(
     context.ui.handle('history', () => existsSync(historyPath) ? JSON.parse(readFileSync(historyPath, 'utf8')) : {}),
@@ -166,6 +280,9 @@ export function activate(context: MainContext) {
   return async () => {
     for (const remove of handlers) remove();
     for (const controller of pending) controller.abort();
+    // Closing the servers first, so nothing is left running on the machine once the window is gone; the connections left
+    // after them are the ones a watch keeps.
+    await Promise.all([...sessions.keys()].map(closeServer));
     for (const connection of connections) connection.disconnect();
   };
 }

@@ -5,6 +5,15 @@ export type Position = { line: number; column: number; top: number };
 export type HistoryEntry = FileClick & Partial<Position>;
 export type History = { entries: HistoryEntry[]; index: number };
 
+// The language service main.ts drives for a file: what the window asks for, what opening one gives back, and what it
+// publishes while a server runs. Bytes cross the channel as base64, since every payload here is JSON.
+export type OpenOptions = { machine: FileClick['machine']; path: string; language: string };
+export type LspClose = { session: string };
+export type LspSession = { session: string; server: string; root: string };
+export type LspData = { session: string; data: string };
+export type LspLog = { session: string; text: string };
+export type LspExit = { session: string; code?: number };
+
 // A search's rows: a match in a file's text, at the line and column the row jumps to.
 export type SearchHit = { path: string; line: number; column: number; text: string };
 
@@ -13,4 +22,5 @@ export const machineKey = (machine: FileClick['machine']) => `${machine.id}|${ma
 
 // The config this plugin accepts: main.ts declares a schema for the same fields.
 export type Font = { family: string; size: number; lineHeight?: number };
-export type Settings = Profile & { font: Font };
+type ServerOverride = { command?: string[]; markers?: string[] };
+export type Settings = Profile & { font: Font; lsp?: Record<string, ServerOverride | false> };

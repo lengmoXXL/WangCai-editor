@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { createWorkspace, until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { alert, backButton, clickFile, codeView, collectErrors, drawnCloseButtons, drawnLines, editorLines, editorPanels, editorTab, forwardButton, goToPath, lists, machine, openEditorWorkspace, openWorkspaces, pathBox, refreshButton, shownPanel, storedHistory, viewMenu, waitForLine, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
+const { alert, backButton, clickFile, codeView, collectErrors, drawnCloseButtons, drawnLines, editorLines, editorPanels, editorTab, forwardButton, goToPath, lists, machine, openEditorWorkspace, openOn, openWorkspaces, pathBox, refreshButton, showFile, shownPanel, storedHistory, viewMenu, waitForLine, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
 
 test('a file link opens as its text, and a path that cannot be read says so', { timeout: 180000 }, () => withWindow('wangcai-editor-open', lists, async ({ home, page, errors }) => {
   const code = join(home, 'sample.ts');
@@ -15,10 +15,9 @@ test('a file link opens as its text, and a path that cannot be read says so', { 
   await openEditorWorkspace(page);
   await clickFile(page, { type: 'file', machine, path: code });
   await codeView(shownPanel(page), 'CODE_AS_TEXT').waitFor();
-  assert.equal(await pathBox(page).inputValue(), code);
+  assert.equal(await pathBox(shownPanel(page)).inputValue(), code);
   // A page is a file like any other here: its own text is what is drawn.
-  await goToPath(page, markdown);
-  await codeView(shownPanel(page), '# Markdown source').waitFor();
+  await showFile(shownPanel(page), markdown, '# Markdown source');
   // The text is shown, never taken: a key typed into it changes nothing.
   const lines = editorLines(shownPanel(page));
   const before = await lines.innerText();
@@ -26,9 +25,9 @@ test('a file link opens as its text, and a path that cannot be read says so', { 
   await page.keyboard.type('SHOULD_NOT_EDIT');
   assert.equal(await lines.innerText(), before);
   await page.screenshot({ path: 'test/output/screenshots/editor-text.png' });
-  await goToPath(page, binary);
+  await goToPath(shownPanel(page), binary);
   await alert(page).filter({ hasText: '暂不支持二进制' }).waitFor();
-  await goToPath(page, join(home, 'missing.ts'));
+  await goToPath(shownPanel(page), join(home, 'missing.ts'));
   await alert(page).filter({ hasText: '路径不存在' }).waitFor();
   assert.deepEqual(errors, []);
 }));
@@ -38,16 +37,14 @@ test('a file is shown again where it was left', { timeout: 120000 }, () => withW
   const other = join(home, 'other.ts');
   writeFileSync(long, Array.from({ length: 400 }, (_, index) => `const line${index + 1} = ${index + 1};`).join('\n') + '\n');
   writeFileSync(other, 'export const other = 1;\n');
-  await openEditorWorkspace(page);
-  await goToPath(page, long);
-  await codeView(page, 'const line1 = 1;').waitFor();
+  await openOn(page, long, 'const line1 = 1;');
   // Down at the end of the file, which is where the offset is written down as the editor scrolls.
   await page.keyboard.press('G');
-  await codeView(page, 'const line400 = 400;').waitFor();
-  await goToPath(page, other);
+  await codeView(shownPanel(page), 'const line400 = 400;').waitFor();
+  await goToPath(shownPanel(page), other);
   await waitForLine(page, 'export const other = 1;');
   await backButton(page).click();
-  await waitForPath(page, long);
+  await waitForPath(shownPanel(page), long);
   // The editor comes back where it was left rather than at its top: what it draws is far into the file.
   await until(async () => (await drawnLines(page)).some((line) => /^const line3\d\d =/.test(line)));
   assert.deepEqual(errors, []);
@@ -71,7 +68,7 @@ test('navigation history recovers its position and follows workspace tab ownersh
   // is waited for; the menu is closed at this point, which is why the entry is asked for as attached.
   await viewMenu(page).getByRole('button', { name: '编辑器', exact: true, includeHidden: true }).waitFor({ state: 'attached' });
   await clickFile(page, first);
-  await codeView(page, 'recovered').waitFor();
+  await codeView(shownPanel(page), 'recovered').waitFor();
   await clickFile(page, second);
   await codeView(shownPanel(page), 'middle-body').waitFor();
   await clickFile(page, third);
@@ -89,7 +86,7 @@ test('navigation history recovers its position and follows workspace tab ownersh
   const firstWorkspace = (await openWorkspaces(page))[0].id;
   await clickFile(page, second);
   await codeView(shownPanel(page), 'middle-body').waitFor();
-  await goToPath(page, code);
+  await goToPath(shownPanel(page), code);
   await backButton(page).click();
   await codeView(shownPanel(page), 'middle-body').waitFor();
   await createWorkspace(page);
@@ -103,7 +100,7 @@ test('navigation history recovers its position and follows workspace tab ownersh
   await close();
   ({ page, close } = await open());
   collectErrors(page, errors);
-  const address = pathBox(page);
+  const address = pathBox(shownPanel(page));
   await editorPanels(page).nth(1).waitFor({ state: 'attached' });
   assert.deepEqual(await storedHistory(page), history);
   const workspaces = workspaceTabs(page);
@@ -130,11 +127,10 @@ test('navigation history recovers its position and follows workspace tab ownersh
   await back.click();
   await codeView(shownPanel(page), 'middle-body').waitFor();
   await back.click();
-  await codeView(page, 'recovered').waitFor();
+  await codeView(shownPanel(page), 'recovered').waitFor();
   assert.equal(await address.inputValue(), code);
   assert.ok(await back.isDisabled());
-  await goToPath(page, middle);
-  await codeView(page, 'middle-body').waitFor();
+  await showFile(shownPanel(page), middle, 'middle-body');
   assert.ok(await forward.isDisabled());
   assert.deepEqual((await storedHistory(page))[firstWorkspace], {
     entries: [first, { type: 'file', machine, path: middle }], index: 1,

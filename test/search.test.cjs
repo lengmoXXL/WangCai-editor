@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { mkdirSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { codeView, dismissSearch, editorFocused, filesEmpty, goToPath, lists, openEditorWorkspace, openSearch, pathBox, search, searchInput, searchMarks, searchNote, searchPanel, searchRow, searchRows, submitSearch, waitForLine, waitForPath } = require('./editor-ui.cjs');
+const { codeView, dismissSearch, editorFocused, filesEmpty, landedOn, lists, openOn, openSearch, pathBox, search, searchInput, searchMarks, searchNote, searchPanel, searchRow, searchRows, shownPanel, submitSearch, waitForPath } = require('./editor-ui.cjs');
 
 test('the search box finds files and text, and Enter opens what it found', { timeout: 120000 }, () => withWindow('wangcai-editor-search', lists, async ({ home, page, errors }) => {
   const main = join(home, 'main.ts');
@@ -15,9 +15,7 @@ test('the search box finds files and text, and Enter opens what it found', { tim
     '',
   ].join('\n'));
   writeFileSync(nested, 'export const nested = 1;\n');
-  await openEditorWorkspace(page);
-  await goToPath(page, main);
-  await codeView(page, 'GREP_TARGET').waitFor();
+  await openOn(page, main, 'GREP_TARGET');
   // A name is looked for under the workspace's own directory, and Enter opens the file it names.
   await openSearch(page);
   // Nothing is chosen yet: the list marks the row of the entry the tab is on, and the page stays on it.
@@ -25,7 +23,7 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   await mainRow.waitFor();
   // Longer than the picker's rest before it follows a selection, so a page that was going to move has moved.
   await page.waitForTimeout(400);
-  assert.equal(await pathBox(page).inputValue(), main);
+  assert.equal(await pathBox(shownPanel(page)).inputValue(), main);
   assert.equal(await mainRow.getAttribute('aria-current'), 'true');
   assert.equal(await searchPanel(page).evaluate((element) => getComputedStyle(element).fontSize), '12px');
   // Typed a letter at a time, with a pause long enough for the page to follow each one: none of that may take the
@@ -37,9 +35,9 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   // The row marks the letters it matched, so what put it on the list is visible.
   assert.ok((await searchMarks(nestedRow)).title.length > 0);
   // The page above the picker follows the chosen row, so the file is there before Enter closes the picker.
-  await waitForPath(page, nested);
+  await waitForPath(shownPanel(page), nested);
   assert.equal(await searchPanel(page).count(), 1);
-  await codeView(page, 'nested = 1').waitFor();
+  await codeView(shownPanel(page), 'nested = 1').waitFor();
   await submitSearch(page);
   // The picker that closes hands the keyboard to the page it opened.
   await until(() => editorFocused(page));
@@ -48,14 +46,13 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   await search(page, '>GREP_TARGET');
   await searchRow(page, 'main.ts:2').waitFor();
   // The row under the selection is where the page sits already, so the match is shown before Enter.
-  await waitForPath(page, main);
-  await waitForLine(page, 'const GREP_TARGET = answer;');
+  await landedOn(page, main, 'const GREP_TARGET = answer;');
   await submitSearch(page);
 
   // The picker is opened again from the header, and Escape leaves without moving the page.
   await openSearch(page);
   await dismissSearch(page);
-  assert.equal(await pathBox(page).inputValue(), main);
+  assert.equal(await pathBox(shownPanel(page)).inputValue(), main);
 
   // A folder is searched as the row prints it, and each side of the row marks what it matched: here the query runs
   // through the folder into the name.

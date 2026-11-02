@@ -69,6 +69,11 @@ const waitForPath = (scope, path) => until(async () => (await pathBox(scope).fir
 // The code a panel's editor shows.
 const editorLines = (scope) => scope.locator('.editor-code .cm-content');
 const codeView = (scope, text) => editorLines(scope).filter({ hasText: text });
+// A panel pointed at a file, waited for by a line the file holds.
+const showFile = async (scope, path, text) => {
+  await goToPath(scope, path);
+  await codeView(scope, text).waitFor();
+};
 // The lines the editor has drawn: a view that scrolled keeps the ones it drew before, so this is not only what is on
 // screen.
 const drawnLines = (page) => page.evaluate(() => [...document.querySelectorAll('.editor-code .cm-line')].map((line) => line.textContent ?? ''));
@@ -79,9 +84,28 @@ const cursorLine = (page) => page.evaluate(() => {
   return active ? active.textContent : null;
 });
 const waitForLine = (page, text) => until(async () => (await cursorLine(page)) === text);
+// A jump that landed: the page shows that file, with the cursor on that line. The cursor is read from the page itself, so
+// this takes a page rather than a panel.
+const landedOn = async (page, path, line) => {
+  await waitForPath(shownPanel(page), path);
+  await waitForLine(page, line);
+};
 
 // Whether the keyboard is in this editor.
 const editorFocused = (page) => page.evaluate(() => Boolean(document.activeElement?.closest('.editor-code')));
+
+// The dot the language service behind the file is shown by, in the state it is asked about, and the panel that names the
+// service while the pointer rests on it.
+const lspDot = (scope, state) => scope.locator(`.editor-lsp.${state}`);
+const lspDetail = (scope) => scope.locator('.editor-lsp-detail');
+// The list of references a menu entry opens, and the rows it holds.
+const referenceList = (scope) => scope.getByRole('dialog', { name: '引用' });
+const referenceRows = (scope) => referenceList(scope).locator('.lsp-reference');
+// What the language service draws in the editor: the tooltip a hover opens, and the underline of a diagnostic.
+const hoverTips = (page) => page.locator('.cm-tooltip');
+const diagnostics = (scope) => scope.locator('.editor-code [class*=cm-lintRange]');
+// The box the text is drawn in, which a case measuring where the editor ends takes.
+const codeSurface = (scope) => scope.locator('.editor-code');
 
 // The buttons of a panel's header.
 const backButton = (page) => page.getByRole('button', { name: '后退', exact: true });
@@ -132,6 +156,13 @@ const submitSearch = async (scope) => {
   await searchPanel(scope).waitFor({ state: 'detached' });
 };
 
+// Escape closes an overlay of this plugin's — its menu or its list of references — which the page waits out before the
+// next question.
+const dismiss = async (panel) => {
+  await panel.page().keyboard.press('Escape');
+  await panel.waitFor({ state: 'detached' });
+};
+
 // Escape leaves the picker without opening anything.
 const dismissSearch = async (scope) => {
   await searchInput(scope).press('Escape');
@@ -149,6 +180,12 @@ const search = async (scope, query) => {
 const openEditorWorkspace = async (page) => {
   await createWorkspace(page);
   await openView(page, '编辑器');
+};
+
+// A workspace opened, with one of its files shown: the panel on show, since a tab can be one of several.
+const openOn = async (page, path, text) => {
+  await openEditorWorkspace(page);
+  await showFile(shownPanel(page), path, text);
 };
 
 // Closes a workspace through the row's own menu, the way a person does.
@@ -175,8 +212,8 @@ module.exports = {
   shownPanel,
   editorPanels,
   collectErrors,
-  openWorkspaces,
   alert,
+  openWorkspaces,
   storedHistory,
   clickFile,
   pathBox,
@@ -184,9 +221,19 @@ module.exports = {
   waitForPath,
   editorLines,
   codeView,
-  waitForLine,
+  showFile,
   drawnLines,
+  cursorLine,
+  waitForLine,
+  landedOn,
   editorFocused,
+  lspDot,
+  lspDetail,
+  referenceList,
+  referenceRows,
+  hoverTips,
+  diagnostics,
+  codeSurface,
   backButton,
   forwardButton,
   refreshButton,
@@ -203,8 +250,10 @@ module.exports = {
   searchMarks,
   openSearch,
   submitSearch,
+  dismiss,
   dismissSearch,
   search,
   openEditorWorkspace,
+  openOn,
   closeWorkspace,
 };

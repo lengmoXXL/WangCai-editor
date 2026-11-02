@@ -4,7 +4,7 @@ const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { activeTerminal, createWorkspace, openView, until, withHome } = require('@lengmoxxl/wangcai-testkit');
-const { backButton, boxOf, closeTab, closeWorkspace, codeView, collectErrors, desktopMain, drawnCloseButtons, editorPanels, editorTab, goToPath, newSidebarTab, openWorkspaces, pathBox, runIn, selectedViewTab, shownPanel, sidebarLeft, sidebarRight, sidebarTabs, sidebarToggle, viewMenu, viewTab, workspaceBar, workspaceTabs } = require('./editor-ui.cjs');
+const { backButton, boxOf, closeTab, closeWorkspace, codeView, collectErrors, desktopMain, drawnCloseButtons, editorPanels, editorTab, newSidebarTab, openWorkspaces, pathBox, runIn, selectedViewTab, showFile, shownPanel, sidebarLeft, sidebarRight, sidebarTabs, sidebarToggle, viewMenu, viewTab, workspaceBar, workspaceTabs } = require('./editor-ui.cjs');
 
 // One window, read for five things it draws: the views the menu switches between, a terminal that is gone, the cards and
 // tabs of the sidebar, where a drag drops a row or a tab, and how the dividers size and remember the two panes.
@@ -202,10 +202,8 @@ test('the sidebar switches views, and draws its cards, drops and dividers', { ti
     await closeTab(page, '编辑器').click();
     assert.equal(await editorTab(page).count(), 0);
     await openView(page, '编辑器');
-    await goToPath(shownPanel(page), join(home, '.hidden.md'));
-    await codeView(shownPanel(page), '# Hidden page').waitFor();
-    await goToPath(shownPanel(page), join(home, '子目录 with spaces', '空 格.md'));
-    await codeView(shownPanel(page), '# Nested page').waitFor();
+    await showFile(shownPanel(page), join(home, '.hidden.md'), '# Hidden page');
+    await showFile(shownPanel(page), join(home, '子目录 with spaces', '空 格.md'), '# Nested page');
     // Stepping back lands on the file the tab opened before the one typed in.
     await back.click();
     await codeView(shownPanel(page), '# Hidden page').waitFor();
