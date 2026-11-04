@@ -2,7 +2,7 @@ const { execFileSync } = require('node:child_process');
 const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-const { lists, lspDot, openOn, shownPanel } = require('./editor-ui.cjs');
+const { lists, lspDot, showWritten, shownPanel } = require('./editor-ui.cjs');
 
 // The compiler options a server is asked about, strict enough to report a type error: every TypeScript project here is
 // written with them.
@@ -14,8 +14,7 @@ const tsconfig = '{"compilerOptions":{"strict":true}}\n';
 const openTs = async (home, page, source, text) => {
   const main = join(home, 'main.ts');
   writeFileSync(join(home, 'tsconfig.json'), tsconfig);
-  writeFileSync(main, source);
-  await openOn(page, main, text);
+  await showWritten(page, main, source, text);
   await lspDot(shownPanel(page), 'open').waitFor({ timeout: 60000 });
   return main;
 };
@@ -23,8 +22,7 @@ const openTs = async (home, page, source, text) => {
 // A rust project of one file, written and shown.
 const openRust = async (home, page) => {
   const main = join(home, 'main.rs');
-  writeFileSync(main, 'fn main() {}\n');
-  await openOn(page, main, 'fn main');
+  await showWritten(page, main, 'fn main() {}\n', 'fn main');
 };
 
 // The processes whose command line holds this text: ps is read once and cut here, so every probe cuts the same way.

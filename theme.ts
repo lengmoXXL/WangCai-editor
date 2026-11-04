@@ -17,7 +17,13 @@ export function editorTheme(theme: Theme, font: Font) {
     '&.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': { backgroundColor: theme.selection },
     '&.cm-editor.cm-focused .cm-fat-cursor': { backgroundColor: theme.cursor },
     '.cm-gutters': { backgroundColor: theme.background, color: theme.muted, border: 'none' },
-    '.cm-activeLine': { backgroundColor: theme.overlay },
+    // CodeMirror's own theme paints the line the caret is on, and that background paints over the marks of a selection,
+    // which is what hides a selection on the very line; a box below them does not. So the line's background is cleared and
+    // a box drawn instead.
+    '.cm-activeLine': { position: 'relative', backgroundColor: 'transparent' },
+    // Layers below the text count down from -1 in the scroller's stacking context — the selection's is -2 — while the ones
+    // above it count down from 150, so -10 sits under the selection and still leaves room for the layers a plugin brings.
+    '.cm-activeLine::before': { content: '""', position: 'absolute', inset: '0', zIndex: '-10', backgroundColor: theme.overlay },
     '.cm-scroller::-webkit-scrollbar': { width: '10px', height: '10px' },
     '.cm-scroller::-webkit-scrollbar-thumb': { backgroundColor: theme.muted, borderRadius: '5px' },
     '.cm-scroller::-webkit-scrollbar-thumb:hover': { backgroundColor: theme.foreground },

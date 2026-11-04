@@ -4,28 +4,49 @@ const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { activeTerminal, createWorkspace, openView, until, withHome } = require('@lengmoxxl/wangcai-testkit');
-const { backButton, boxOf, closeTab, closeWorkspace, codeView, collectErrors, desktopMain, drawnCloseButtons, editorPanels, editorTab, newSidebarTab, openWorkspaces, pathBox, runIn, selectedViewTab, showFile, shownPanel, sidebarLeft, sidebarRight, sidebarTabs, sidebarToggle, viewMenu, viewTab, workspaceBar, workspaceTabs } = require('./editor-ui.cjs');
+const { backButton, boxOf, closeTab, closeWorkspace, codeShowing, collectErrors, desktopMain, drawnCloseButtons, editorPanels, editorTab, editorView, newSidebarTab, openWorkspaces, pathBox, runIn, selectedViewTab, showAfter, showFile, shownPanel, sidebarLeft, sidebarRight, sidebarTabs, sidebarToggle, viewMenu, viewTab, waitForPath, workspaceBar, workspaceTabs } = require('./editor-ui.cjs');
+
+// The strings the case pins: its own plugin's view title and field, the folder and files it opens, the page in each of
+// them, and the colour the cards and tabs are drawn with.
+const viewTitle = '测试视图';
+const viewField = '视图内容';
+const spacedFolder = '子目录 with spaces';
+const spacedFile = '空 格.md';
+const spacedPage = '# Nested page';
+const hiddenFile = '.hidden.md';
+const hiddenPage = '# Hidden page';
+const cardColour = 'rgb(51, 53, 54)';
+// The id the case's own plugin is mounted under, and the text typed into its view.
+const otherPlugin = 'other';
+const typedText = 'preserved';
+// The editor's view opened, waited for by the address bar it draws: a page takes that box in when it mounts.
+const openEditorView = async (page) => {
+  await openView(page, editorView);
+  await pathBox(shownPanel(page)).waitFor();
+};
 
 // One window, read for five things it draws: the views the menu switches between, a terminal that is gone, the cards and
 // tabs of the sidebar, where a drag drops a row or a tab, and how the dividers size and remember the two panes.
 test('the sidebar switches views, and draws its cards, drops and dividers', { timeout: 180000 }, () => {
   // A plugin of the case's own, which draws a view the sidebar can be switched to.
   const other = mkdtempSync(join(tmpdir(), 'wangcai-sidebar-other-'));
-  return withHome('wangcai-sidebar', { workspaces: ['terminal-agent'], tabs: ['editor', { id: 'other', directory: other }] }, async ({ home, open }) => {
-    writeFileSync(join(other, 'main.cjs'), 'exports.activate = () => {};');
-    writeFileSync(join(other, 'ui.js'), `
-      export const title = '测试视图';
+  return withHome('wangcai-sidebar', { workspaces: ['terminal-agent'], tabs: ['editor', { id: otherPlugin, directory: other }] }, async ({ home, open }) => {
+    const pluginMain = 'exports.activate = () => {};';
+    const otherUi = `
+      export const title = '${viewTitle}';
       export function mount() {}
-      export function open(context) { context.host.tabs({ id: 'other', title: '测试视图', mount(container) {
+      export function open(context) { context.host.tabs({ id: '${otherPlugin}', title: '${viewTitle}', mount(container) {
         const input = document.createElement('input');
-        input.setAttribute('aria-label', '视图内容');
+        input.setAttribute('aria-label', '${viewField}');
         container.append(input);
         return { dispose: () => input.remove() };
       } }); }
-    `);
-    mkdirSync(join(home, '子目录 with spaces'));
-    writeFileSync(join(home, '子目录 with spaces', '空 格.md'), '# Nested page');
-    writeFileSync(join(home, '.hidden.md'), '# Hidden page');
+    `;
+    writeFileSync(join(other, 'main.cjs'), pluginMain);
+    writeFileSync(join(other, 'ui.js'), otherUi);
+    mkdirSync(join(home, spacedFolder));
+    writeFileSync(join(home, spacedFolder, spacedFile), spacedPage);
+    writeFileSync(join(home, hiddenFile), hiddenPage);
     let { desktop, page, close } = await open();
     const errors = [];
     collectErrors(page, errors);
@@ -39,16 +60,16 @@ test('the sidebar switches views, and draws its cards, drops and dividers', { ti
     const main = desktopMain(page);
     const back = backButton(page);
     const noTerminal = shown.getByText('请选择一个已连接的终端', { exact: true });
-    const viewContent = page.getByLabel('视图内容');
+    const viewContent = page.getByLabel(viewField);
     await newTab.click();
     await menu.waitFor();
     await page.keyboard.press('Escape');
     await menu.waitFor({ state: 'hidden' });
-    await openView(page, '编辑器');
+    await openView(page, editorView);
     await noTerminal.waitFor();
     assert.equal(await shown.count(), 1);
-    await openView(page, '测试视图');
-    await viewContent.fill('preserved');
+    await openView(page, viewTitle);
+    await viewContent.fill(typedText);
     const lastTabBox = await sidebarTabs(page).last().boundingBox();
     const plusBox = await newTab.boundingBox();
     const toggleBox = await toggle.boundingBox();
@@ -58,7 +79,7 @@ test('the sidebar switches views, and draws its cards, drops and dividers', { ti
     assert.ok(await panels.isHidden());
     assert.ok(await main.locator('[data-plugin=terminal-agent]').isVisible());
     assert.equal(await shown.count(), 1);
-    await openView(page, '编辑器');
+    await openView(page, editorView);
     await createWorkspace(page);
     await createWorkspace(page);
     const workspaces = workspaceTabs(page);
@@ -88,15 +109,15 @@ test('the sidebar switches views, and draws its cards, drops and dividers', { ti
     });
     let drawn;
     // The hairline sits on a shadow or a pseudo-element, so selecting a row or a tab never moves its icon.
-    await until(async () => (drawn = await cards()) !== null && drawn.row[2] === 'rgb(51, 53, 54) 0px 0px 0px 1px inset');
+    await until(async () => (drawn = await cards()) !== null && drawn.row[2] === `${cardColour} 0px 0px 0px 1px inset`);
     assert.equal(drawn.row[0], drawn.tab[0]);
     assert.deepEqual([drawn.leftRadius, drawn.row[1], drawn.tab[1]], ['8px 0px 0px 8px', '0px', '8px 8px 0px 0px']);
-    assert.deepEqual(drawn.tab.slice(2), ['0px', '1px', 'rgb(51, 53, 54)']);
+    assert.deepEqual(drawn.tab.slice(2), ['0px', '1px', cardColour]);
     // The list's own hairline is an overlay, so a row background can never replace that column.
     assert.deepEqual(await left.evaluate((element) => {
       const hairline = getComputedStyle(element, '::after');
       return [getComputedStyle(element).boxShadow, hairline.position, hairline.right, hairline.width, hairline.backgroundColor, hairline.pointerEvents];
-    }), ['none', 'absolute', '0px', '1px', 'rgb(51, 53, 54)', 'none']);
+    }), ['none', 'absolute', '0px', '1px', cardColour, 'none']);
     assert.deepEqual(await page.evaluate(async () => {
       const nav = document.querySelector('.sidebar-left .workspaces');
       const pane = document.querySelector('.sidebar-left');
@@ -199,36 +220,33 @@ test('the sidebar switches views, and draws its cards, drops and dividers', { ti
     assert.ok(afterResize.innerWidth > beforeResize.innerWidth);
     assert.ok(Math.abs(afterResize.leftWidth / afterResize.innerWidth - beforeResize.leftWidth / beforeResize.innerWidth) < 0.01);
     assert.ok(Math.abs(afterResize.rightWidth / afterResize.innerWidth - beforeResize.rightWidth / beforeResize.innerWidth) < 0.01);
-    await closeTab(page, '编辑器').click();
+    await closeTab(page, editorView).click();
     assert.equal(await editorTab(page).count(), 0);
-    await openView(page, '编辑器');
-    await showFile(shownPanel(page), join(home, '.hidden.md'), '# Hidden page');
-    await showFile(shownPanel(page), join(home, '子目录 with spaces', '空 格.md'), '# Nested page');
+    await openView(page, editorView);
+    await showFile(shownPanel(page), join(home, hiddenFile), hiddenPage);
+    await showFile(shownPanel(page), join(home, spacedFolder, spacedFile), spacedPage);
     // Stepping back lands on the file the tab opened before the one typed in.
-    await back.click();
-    await codeView(shownPanel(page), '# Hidden page').waitFor();
-    await viewTab(page, '测试视图').click();
-    assert.equal(await viewContent.inputValue(), 'preserved');
-    assert.ok(await codeView(page, '# Hidden page').isHidden());
+    await showAfter(page, back, hiddenPage);
+    await viewTab(page, viewTitle).click();
+    assert.equal(await viewContent.inputValue(), typedText);
+    assert.ok(await codeShowing(page, hiddenPage).isHidden());
     await closeWorkspace(workspaces.filter({ hasText: '~' }));
     await workspaces.waitFor({ state: 'detached' });
     assert.equal(await panels.count(), 0);
     const existing = (await openWorkspaces(page)).map((workspace) => workspace.id);
     const storedTabs = await page.evaluate(() => window.wangcai.call('tabs'));
     assert.deepEqual(storedTabs.filter((record) => record.workspaceId && !existing.includes(record.workspaceId)), []);
-    await openView(page, '编辑器');
-    await pathBox(shownPanel(page)).waitFor();
+    await openEditorView(page);
     await createWorkspace(page);
     // A workspace that was never given a file shows the address box of its own directory.
-    await until(async () => (await pathBox(shownPanel(page)).inputValue()) === home);
+    await waitForPath(shownPanel(page), home);
     await runIn(activeTerminal(page), 'exit');
     const restart = page.getByRole('button', { name: '重新打开终端', exact: true });
     await restart.click();
     await restart.waitFor({ state: 'detached' });
     await toggle.click();
     await right.waitFor({ state: 'hidden' });
-    await openView(page, '编辑器');
-    await pathBox(shownPanel(page)).waitFor();
+    await openEditorView(page);
     await page.screenshot({ path: 'test/output/screenshots/sidebar-layout.png' });
     while (await drawnCloseButtons(page).count()) await drawnCloseButtons(page).last().click();
     await right.waitFor({ state: 'hidden' });
@@ -241,7 +259,7 @@ test('the sidebar switches views, and draws its cards, drops and dividers', { ti
     await close();
     ({ page, close } = await open());
     collectErrors(page, errors);
-    await openView(page, '编辑器');
+    await openView(page, editorView);
     await sidebarLeft(page).waitFor();
     await sidebarRight(page).waitFor();
     const afterReload = await measure();

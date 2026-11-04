@@ -1,7 +1,7 @@
 import { history as undoHistory } from '@codemirror/commands';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, drawSelection, highlightActiveLine, lineNumbers } from '@codemirror/view';
-import { Vim, vim } from '@replit/codemirror-vim';
+import { Vim, getCM, vim, type CodeMirrorV } from '@replit/codemirror-vim';
 import { createRoot } from 'react-dom/client';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import fuzzysort from 'fuzzysort';
@@ -34,6 +34,9 @@ type Jumps = { entries: Target[]; index: number };
 // it; it lives in this window only, and the plugin going away drops it.
 const drafts = new Map<string, string>();
 const fileKey = (file: FileClick) => `${machineKey(file.machine)}|${file.path}`;
+
+// The page the editor hangs from: the element the Core hands the keys to and takes them back from.
+const pageOf = (element: HTMLElement | null) => element?.closest<HTMLElement>('[data-plugin]');
 
 // The view behind the vim adapter the keys are answered with: `cm6` is the field it carries the CodeMirror view in, which
 // its own types do not say.
@@ -156,25 +159,32 @@ function Navigation({ context, file, navigate, back, forward, openSearch, dirty,
       </button>
       <Address context={context} base={file} navigate={navigate} report={setAddressError} />
       {dirty && <span className="editor-dirty" role="status" aria-label="有未写回的改动" title="有未写回的改动">*</span>}
-      <LspStatus file={file} />
-      <button className="editor-icon" aria-label="预览" title="在 preview 里打开" onClick={() => void context.global.publish('preview:open', file)}>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8Z" /><circle cx="8" cy="8" r="1.8" /></svg>
-      </button>
-      <button className="editor-icon" aria-label="搜索" title="搜索" onClick={openSearch}>
-        <Glass />
-      </button>
+      <div className="editor-tail">
+        <LspStatus file={file} />
+        <button className="editor-icon" aria-label="预览" title="在 preview 里打开" onClick={() => void context.global.publish('preview:open', file)}>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8Z" /><circle cx="8" cy="8" r="1.8" /></svg>
+        </button>
+        <button className="editor-icon" aria-label="搜索" title="搜索" onClick={openSearch}>
+          <Glass />
+        </button>
+      </div>
     </Header>
     {headerMessage && <div className="file-message" role="alert">{headerMessage}</div>}
   </>;
 }
 
-// The menu a right click opens: the location features, which the server's own capabilities decide the width of.
-const lspMenu: { feature: LocationFeature; label: string }[] = [
-  { feature: 'definition', label: '转到定义' },
-  { feature: 'implementation', label: '转到实现' },
-  { feature: 'typeDefinition', label: '转到类型定义' },
-  { feature: 'references', label: '查找引用' },
-];
+// A question a place in a file can be asked of a server: the name the menu offers it under, and the title of the panel that
+// lists the places it found.
+type LspQuestion = { label: string; title: string };
+const lspQuestions: Record<LocationFeature, LspQuestion> = {
+  definition: { label: '转到定义', title: '定义' },
+  implementation: { label: '转到实现', title: '实现' },
+  typeDefinition: { label: '转到类型定义', title: '类型定义' },
+  references: { label: '查找引用', title: '引用' },
+};
+// The same questions in the order the menu offers them: an object keeps its keys in the order they were written, while
+// TypeScript types them as strings.
+const lspMenu = Object.entries(lspQuestions) as [LocationFeature, LspQuestion][];
 
 // The line an offset sits on, and how far into it, which is what a visit is remembered by.
 const positionOf = (view: EditorView) => {
@@ -189,7 +199,8 @@ const placeOf = (view: EditorView) => {
 };
 
 // A panel laid over the text it is about: the backdrop under it takes the click that closes it, and its first row takes the
-// keyboard wherever the focus was, so Escape reaches the panel and Enter opens what the row names.
+// keyboard wherever the focus was, so Escape reaches the panel, `j` and `k` walk its rows, and Enter opens what the row
+// names.
 function Overlay({ className, role, label, at, onClose, children }: {
   className: string; role: 'menu' | 'dialog'; label: string; at?: CSSProperties; onClose: () => void; children: ReactNode;
 }) {
@@ -198,7 +209,15 @@ function Overlay({ className, role, label, at, onClose, children }: {
   return <>
     <div className="editor-backdrop" onClick={onClose} />
     <div ref={panel} className={className} role={role} aria-label={label} style={at}
-      onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') { onClose(); return; }
+        const step = event.key === 'j' ? 1 : event.key === 'k' ? -1 : 0;
+        if (!step) return;
+        event.preventDefault();
+        const rows = [...event.currentTarget.querySelectorAll<HTMLElement>('button')];
+        const here = rows.findIndex((row) => row === document.activeElement);
+        rows[Math.min(Math.max(here + step, 0), rows.length - 1)].focus();
+      }}>
       {children}
     </div>
   </>;
@@ -213,7 +232,7 @@ function EditorPage({ file, text, remember, peeking, navigate, jumps, editing }:
   const handlers = useRef(editing);
   useEffect(() => { handlers.current = editing; });
   const [menu, setMenu] = useState<{ x: number; y: number; entries: typeof lspMenu; at: Place }>();
-  const [references, setReferences] = useState<Target[]>();
+  const [places, setPlaces] = useState<{ title: string; targets: Target[] }>();
   // What this page asks a server about, made once: a new path or machine is a new page, so this value holds for the mount.
   const options = useMemo(() => serviceFor(file), [file.machine, file.path]);
   // The server this file speaks to, replaced by the dot or the revival behind it.
@@ -246,13 +265,16 @@ function EditorPage({ file, text, remember, peeking, navigate, jumps, editing }:
     jumps.index = jumps.entries.length - 1;
     navigate(visit(target, file.machine));
   };
-  // One of the questions the menu and the keys ask about a place in this file: `references` is shown rather than followed,
-  // since it names more than one place, and every other answer is a jump.
+  // One of the questions the menu and the keys ask about a place in this file. References are always a list to pick from,
+  // and a jump that turned out to name more than one place is too; a jump with one place is followed.
   const goAt = async (feature: LocationFeature, at: Place) => {
     if (!options || !services) return;
     const found = await services.locations(options, at.line, at.character, feature);
-    // What `references` would show belongs to this question alone: a question that found nothing leaves no list behind.
-    if (feature === 'references') { setReferences(found.length ? found : undefined); return; }
+    // What the list would show belongs to this question alone: a question that found nothing leaves no list behind.
+    if (feature === 'references' || found.length > 1) {
+      setPlaces(found.length ? { title: lspQuestions[feature].title, targets: found } : undefined);
+      return;
+    }
     if (found[0]) jumpFrom(found[0]);
   };
   // The entry the view shows now: it outlives the entry it was built for, so what its callbacks record reads from here.
@@ -337,7 +359,7 @@ function EditorPage({ file, text, remember, peeking, navigate, jumps, editing }:
       const at = view?.posAtCoords({ x: event.clientX, y: event.clientY }) ?? null;
       // The gutter, the empty space below the text, and the spacing between words are not places to ask about.
       if (!view || !session || at === null || !view.state.sliceDoc(at, at + 1).trim()) return;
-      const entries = lspMenu.filter(({ feature }) => session.supports(feature));
+      const entries = lspMenu.filter(([feature]) => session.supports(feature));
       if (!entries.length) return;
       event.preventDefault();
       // Every entry asks the server about the cursor, so it goes where the click landed.
@@ -353,28 +375,46 @@ function EditorPage({ file, text, remember, peeking, navigate, jumps, editing }:
   // The keyboard is handed over again for each thing that changes who should have it: a peek takes it and gives it back, and
   // a view built for a new text is a new one to hand it to.
   useEffect(() => { focusEditor(); }, [peeking, text]);
+  // A panel that closes hands the keys back: the row that held them goes with it, and a jump into this very file rebuilds
+  // nothing, so no other effect would hand them over again.
+  const closePanels = () => { setMenu(undefined); setPlaces(undefined); focusEditor(); };
   // A key that shows this view leaves the keyboard on the plugin's page rather than in the editor, so the page hands it
   // over when it hears that it was shown — a listener here, since the page's focus alone does not say who shows it.
   useEffect(() => {
-    const page = element.current?.closest<HTMLElement>('[data-plugin]');
+    const page = pageOf(element.current);
     if (!page) return;
     page.addEventListener('wangcai:shown', focusEditor);
     return () => page.removeEventListener('wangcai:shown', focusEditor);
   }, [peeking]);
+  // A press that leaves the field hands the keys to the page, and the text ends what it was doing on the way out: an insert
+  // mode still open would be open again when the keys come back to it.
+  useEffect(() => {
+    const page = pageOf(element.current);
+    if (!page) return;
+    const leaveInsert = () => {
+      const view = control.current;
+      // `getCM` hands back the object Vim keeps its own state on, typed more loosely than the call below wants it.
+      const cm = view && getCM(view);
+      // The cursor stays where the typing left it: this press is about the keys, not about where the text goes on.
+      if (cm) Vim.exitInsertMode(cm as CodeMirrorV, true);
+    };
+    page.addEventListener('focus', leaveInsert);
+    return () => page.removeEventListener('focus', leaveInsert);
+  }, []);
   return <>
     <div className="editor-code" ref={element} />
-    {menu && <Overlay className="code-menu" role="menu" label="语言服务" at={{ left: menu.x, top: menu.y }} onClose={() => setMenu(undefined)}>
-      {menu.entries.map(({ feature, label }) => <button key={feature} role="menuitem"
+    {menu && <Overlay className="code-menu" role="menu" label="语言服务" at={{ left: menu.x, top: menu.y }} onClose={closePanels}>
+      {menu.entries.map(([feature, { label }]) => <button key={feature} role="menuitem"
         onClick={() => {
-          setMenu(undefined);
+          closePanels();
           void goAt(feature, menu.at);
         }}>{label}</button>)}
     </Overlay>}
-    {references && <Overlay className="lsp-references" role="dialog" label="引用" onClose={() => setReferences(undefined)}>
-      {references.map((target) => <button key={`${target.path}:${target.line}:${target.column}`} className="lsp-reference"
-        onClick={() => { setReferences(undefined); jumpFrom(target); }}>
-        <span>{target.path.slice(target.path.lastIndexOf('/') + 1)}</span>
-        <span className="lsp-reference-at">{target.line}:{target.column}</span>
+    {places && <Overlay className="lsp-places" role="dialog" label={places.title} onClose={closePanels}>
+      {places.targets.map((target) => <button key={`${target.path}:${target.line}:${target.column}`} className="lsp-place"
+        onClick={() => { closePanels(); jumpFrom(target); }}>
+        <span className="lsp-place-file">{target.path.slice(target.path.lastIndexOf('/') + 1)}</span>
+        <span className="lsp-place-at">{target.line}:{target.column}</span>
       </button>)}
     </Overlay>}
   </>;
