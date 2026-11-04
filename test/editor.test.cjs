@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { createWorkspace, until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { alert, backButton, clickFile, codeView, collectErrors, drawnCloseButtons, drawnLines, editorLines, editorPanels, editorTab, forwardButton, goToPath, lists, machine, openEditorWorkspace, openOn, openWorkspaces, pathBox, refreshButton, showFile, shownPanel, storedHistory, viewMenu, waitForLine, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
+const { alert, backButton, clickFile, codeView, collectErrors, drawnCloseButtons, drawnLines, editorPanels, editorTab, forwardButton, goToPath, lists, machine, openEditorWorkspace, openOn, openWorkspaces, pathBox, refreshButton, showFile, shownPanel, storedHistory, viewMenu, waitForLine, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
 
 test('a file link opens as its text, and a path that cannot be read says so', { timeout: 180000 }, () => withWindow('wangcai-editor-open', lists, async ({ home, page, errors }) => {
   const code = join(home, 'sample.ts');
@@ -18,17 +18,19 @@ test('a file link opens as its text, and a path that cannot be read says so', { 
   assert.equal(await pathBox(shownPanel(page)).inputValue(), code);
   // A page is a file like any other here: its own text is what is drawn.
   await showFile(shownPanel(page), markdown, '# Markdown source');
-  // The text is shown, never taken: a key typed into it changes nothing.
-  const lines = editorLines(shownPanel(page));
-  const before = await lines.innerText();
-  await lines.click();
-  await page.keyboard.type('SHOULD_NOT_EDIT');
-  assert.equal(await lines.innerText(), before);
   await page.screenshot({ path: 'test/output/screenshots/editor-text.png' });
   await goToPath(shownPanel(page), binary);
   await alert(page).filter({ hasText: '暂不支持二进制' }).waitFor();
   await goToPath(shownPanel(page), join(home, 'missing.ts'));
   await alert(page).filter({ hasText: '路径不存在' }).waitFor();
+  assert.deepEqual(errors, []);
+}));
+
+test('a file with nothing in it opens as an empty page', { timeout: 120000 }, () => withWindow('wangcai-editor-empty', lists, async ({ home, page, errors }) => {
+  const empty = join(home, 'empty.ts');
+  writeFileSync(empty, '');
+  await openOn(page, empty);
+  assert.deepEqual(await drawnLines(page), ['']);
   assert.deepEqual(errors, []);
 }));
 

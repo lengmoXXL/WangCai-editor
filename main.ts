@@ -191,6 +191,10 @@ export function activate(context: MainContext) {
       return text;
     })));
 
+  // What the page writes back: the text it holds, whole, over the file it was read from.
+  handlers.push(context.ui.handle('write', ({ machine, path, text }: { machine: FileClick['machine']; path: string; text: string }) =>
+    withConnection(machine, (connection) => connection.fs.writeFile(path, Buffer.from(text, 'utf8')))));
+
   // The paths a file search offers: what rg lists under a workspace, which leaves out what git ignores.
   handlers.push(context.ui.handle('find-files', ({ machine, path }: { machine: FileClick['machine']; path: string }) =>
     withConnection(machine, async (connection) => {

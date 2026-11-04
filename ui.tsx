@@ -1,8 +1,9 @@
-import { EditorState, type Extension } from '@codemirror/state';
+import { history as undoHistory } from '@codemirror/commands';
+import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, drawSelection, highlightActiveLine, lineNumbers } from '@codemirror/view';
 import { Vim, vim } from '@replit/codemirror-vim';
 import { createRoot } from 'react-dom/client';
-import { useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import fuzzysort from 'fuzzysort';
 import type { WorkspaceActive } from '@lengmoxxl/sdk';
 import type { TabRecord, UiContext } from '@lengmoxxl/sdk/channel';
@@ -17,8 +18,7 @@ const identity = { id: 'editor', title: '编辑器' };
 export const title = identity.title;
 let activeWorkspaceId: string | undefined;
 let font: Font;
-// What every file is read with: the vim keys over a text nobody writes, in the window's own colours. It is built once, in
-// mount(), and every view shares it.
+// The extensions every view shares: made once in mount(), and taken by each view as it is built.
 let chrome: Extension[] = [];
 let services: LanguageServices | undefined;
 const histories = new Map<string, History>();
@@ -28,9 +28,19 @@ const visit = (target: Target, machine: FileClick['machine']): FileClick =>
   ({ type: 'file', machine, path: target.path, line: target.line, column: target.column });
 // The places a tab has jumped through, and where in them it stands.
 type Jumps = { entries: Target[]; index: number };
-// What the jump keys of the normal mode ask of the view that holds the keyboard: the vim layer knows no editor of ours,
-// so the view is looked up from the one the key arrived in and asked the question the key stands for.
-const jumpKeys = new Map<EditorView, (act: LocationFeature) => void>();
+
+// The text a file was edited into and not written back, by the file's identity: leaving the file keeps it, and the page
+// shows it again instead of what the file holds. Another tab may show the same file, so a tab closing says nothing about
+// it; it lives in this window only, and the plugin going away drops it.
+const drafts = new Map<string, string>();
+const fileKey = (file: FileClick) => `${machineKey(file.machine)}|${file.path}`;
+
+// The view behind the vim adapter the keys are answered with: `cm6` is the field it carries the CodeMirror view in, which
+// its own types do not say.
+const viewOf = (cm: unknown) => (cm as { cm6?: EditorView }).cm6;
+
+// A key the vim layer answers asks the view it was typed into; the tab's `<C-s>` asks the one the page on show holds.
+const pageKeys = new Map<EditorView, { jump: (act: LocationFeature) => void; save: () => void }>();
 
 // The keys the normal mode answers by our own actions: the key, and the question it asks the view.
 const vimCommands: [keys: string, act: LocationFeature][] = [
@@ -39,15 +49,20 @@ const vimCommands: [keys: string, act: LocationFeature][] = [
   ['gr', 'references'],
 ];
 
-// The jump keys are defined once for the whole window, not per view.
+// The keys are defined once for the whole window, not per view, since the vim layer is one state shared by every view.
+// `:w` is answered here too: the library maps it to a `write` of its own that saves nowhere.
 for (const [keys, act] of vimCommands) {
   const name = `wangcai-${act}`;
   Vim.defineAction(name, (cm) => {
-    const view = (cm as unknown as { cm6?: EditorView }).cm6;
-    if (view) jumpKeys.get(view)?.(act);
+    const view = viewOf(cm);
+    if (view) pageKeys.get(view)?.jump(act);
   });
   Vim.mapCommand(keys, 'action', name, {}, { context: 'normal' });
 }
+Vim.defineEx('write', 'w', (cm) => {
+  const view = viewOf(cm);
+  if (view) pageKeys.get(view)?.save();
+});
 
 // A file this plugin reads as no language is nobody's to serve.
 const serviceFor = (file: FileClick): OpenOptions | undefined => {
@@ -62,8 +77,12 @@ const watch = (context: UiContext, machine: FileClick['machine'], holder: string
   return () => { off(); void context.ui.request('watch', { holder, machine, paths: [] }).catch(() => undefined); };
 };
 
+// Whether the keyboard is in a box being typed into, which keeps its keys to itself.
+const writing = (target: EventTarget | null) => target instanceof HTMLElement && ['INPUT', 'TEXTAREA'].includes(target.tagName);
+
 type Remember = (entry: HistoryEntry, at: Partial<Position>) => void;
-type NavigationProps = { context: UiContext; file: HistoryEntry; navigate: (file: FileClick) => void; refresh: () => void; back?: () => void; forward?: () => void; openSearch: () => void };
+// What the tab hands a page it shows.
+type PageProps = { context: UiContext; file: HistoryEntry; navigate: (file: FileClick) => void; back?: () => void; forward?: () => void; openSearch: () => void };
 // A place in a file, counted from zero the way a server is asked about it.
 type Place = { line: number; character: number };
 
@@ -121,8 +140,9 @@ function LspStatus({ file }: { file: HistoryEntry }) {
   </div>;
 }
 
-function Navigation({ context, file, navigate, refresh, back, forward, openSearch }: NavigationProps) {
-  const [error, setError] = useState('');
+function Navigation({ context, file, navigate, back, forward, openSearch, dirty, refresh, writeError }: PageProps & { dirty: boolean; refresh: () => void; writeError: string }) {
+  const [addressError, setAddressError] = useState('');
+  const headerMessage = addressError || writeError;
   return <>
     <Header>
       <button className="editor-icon" aria-label="后退" title="后退" disabled={!back} onClick={back}>
@@ -134,13 +154,17 @@ function Navigation({ context, file, navigate, refresh, back, forward, openSearc
       <button className="editor-icon" aria-label="刷新" title="刷新" onClick={refresh}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.3 6.7A5.3 5.3 0 1 0 12 12 M13.3 2.7v4h-4" /></svg>
       </button>
-      <Address context={context} base={file} navigate={navigate} report={setError} />
+      <Address context={context} base={file} navigate={navigate} report={setAddressError} />
+      {dirty && <span className="editor-dirty" role="status" aria-label="有未写回的改动" title="有未写回的改动">*</span>}
       <LspStatus file={file} />
+      <button className="editor-icon" aria-label="预览" title="在 preview 里打开" onClick={() => void context.global.publish('preview:open', file)}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8Z" /><circle cx="8" cy="8" r="1.8" /></svg>
+      </button>
       <button className="editor-icon" aria-label="搜索" title="搜索" onClick={openSearch}>
         <Glass />
       </button>
     </Header>
-    {error && <div className="file-message" role="alert">{error}</div>}
+    {headerMessage && <div className="file-message" role="alert">{headerMessage}</div>}
   </>;
 }
 
@@ -180,15 +204,26 @@ function Overlay({ className, role, label, at, onClose, children }: {
   </>;
 }
 
-function EditorPage({ file, text, remember, peeking, navigate, jumps }: { file: HistoryEntry; text: string; remember: Remember; peeking: boolean; navigate: (file: FileClick) => void; jumps: Jumps }) {
+type Editing = { onDoc: (text: string) => void; save: () => void };
+
+function EditorPage({ file, text, remember, peeking, navigate, jumps, editing }: { file: HistoryEntry; text: string; remember: Remember; peeking: boolean; navigate: (file: FileClick) => void; jumps: Jumps; editing: Editing }) {
   const element = useRef<HTMLDivElement>(null);
   const control = useRef<EditorView>(undefined);
+  // The view reaches back through this, so the one built once keeps calling the current render's callbacks.
+  const handlers = useRef(editing);
+  useEffect(() => { handlers.current = editing; });
   const [menu, setMenu] = useState<{ x: number; y: number; entries: typeof lspMenu; at: Place }>();
   const [references, setReferences] = useState<Target[]>();
   // What this page asks a server about, made once: a new path or machine is a new page, so this value holds for the mount.
   const options = useMemo(() => serviceFor(file), [file.machine, file.path]);
-  // The server this file speaks to. What asks for it to be replaced is the dot or the revival behind it, never the view.
+  // The server this file speaks to, replaced by the dot or the revival behind it.
   const [session, setSession] = useState(() => options && services?.session(options));
+  // The server's part of the view is swapped in place rather than taken as a reason to build the view again: a view built
+  // again loses what is being typed into it, and a server coming up or going away is no reason for that.
+  const server = useMemo(() => new Compartment(), []);
+  // The link to the session there is now: `session` is only the signal for taking a new one, which is why it is a
+  // dependency without the body reading it — `extension` reads the session itself.
+  const link = useMemo(() => (options && services ? services.extension(options) : []), [options, session]);
   // The file is opened on its server once, and then follows it.
   useEffect(() => {
     const running = services;
@@ -211,21 +246,18 @@ function EditorPage({ file, text, remember, peeking, navigate, jumps }: { file: 
     jumps.index = jumps.entries.length - 1;
     navigate(visit(target, file.machine));
   };
-  // One of the questions the menu and the keys ask about a place in this file: the list of references is shown rather than
-  // followed, since it names more than one place, and every other answer is a jump.
+  // One of the questions the menu and the keys ask about a place in this file: `references` is shown rather than followed,
+  // since it names more than one place, and every other answer is a jump.
   const goAt = async (feature: LocationFeature, at: Place) => {
     if (!options || !services) return;
     const found = await services.locations(options, at.line, at.character, feature);
-    // What the list would show belongs to this question alone: a question that found nothing leaves no list behind.
+    // What `references` would show belongs to this question alone: a question that found nothing leaves no list behind.
     if (feature === 'references') { setReferences(found.length ? found : undefined); return; }
     if (found[0]) jumpFrom(found[0]);
   };
   // The entry the view shows now: it outlives the entry it was built for, so what its callbacks record reads from here.
   const shown = useRef(file);
   useEffect(() => { shown.current = file; });
-  // The view is built again for a new text and for a new server behind the file, and never for a jump inside the file: a
-  // restart swaps `session` while `options` stays the same, so the server is what this is watched by. Hover and diagnostics
-  // are the server's too, and a view tied to the old one answers nothing.
   useEffect(() => {
     const view = new EditorView({
       state: EditorState.create({
@@ -233,8 +265,11 @@ function EditorPage({ file, text, remember, peeking, navigate, jumps }: { file: 
         extensions: [
           ...chrome,
           modeFor(file.path),
-          options && services ? services.extension(options) : [],
-          EditorView.updateListener.of((update) => { if (update.selectionSet) remember(shown.current, positionOf(update.view)); }),
+          server.of(link),
+          EditorView.updateListener.of((update) => {
+            if (update.selectionSet) remember(shown.current, positionOf(update.view));
+            if (update.docChanged) handlers.current.onDoc(update.state.doc.toString());
+          }),
         ],
       }),
       parent: element.current!,
@@ -242,34 +277,41 @@ function EditorPage({ file, text, remember, peeking, navigate, jumps }: { file: 
     control.current = view;
     const scrolled = () => remember(shown.current, { top: view.scrollDOM.scrollTop });
     view.scrollDOM.addEventListener('scroll', scrolled, { passive: true });
-    // The normal mode's jump keys ask what the menu asks, and are handed over as the view is built: a key pressed as soon as
-    // the file appears finds its answer instead of waiting for a later render.
-    jumpKeys.set(view, (act) => void goAt(act, placeOf(view)));
+    // The keys are handed over as the view is built, so a key pressed as soon as the file appears finds its answer instead of
+    // waiting for a later render.
+    pageKeys.set(view, { jump: (act) => void goAt(act, placeOf(view)), save: () => handlers.current.save() });
     return () => {
-      jumpKeys.delete(view);
+      pageKeys.delete(view);
       view.scrollDOM.removeEventListener('scroll', scrolled);
       view.destroy();
       control.current = undefined;
     };
-  }, [text, remember, session, file.path]);
+  }, [text, remember, file.path]);
+  // What makes this run: the page opening, when its server is only known after the open, and a server that restarted, came
+  // back, or went away while the tab showed something else.
+  useEffect(() => {
+    const view = control.current;
+    if (view) view.dispatch({ effects: server.reconfigure(link) });
+  }, [server, link]);
   // Where the view sits: the offset the file was left at, or else the line the entry was opened at. A view that was built
   // again starts at its own top, so the offset is taken for it once more; a panel that has given it no height yet places
-  // it on a later frame. That offset is read once per view, so what this runs for is the changes that build one.
+  // it on a later frame. That offset is read once per view, so what this runs for is a view being built and a jump that
+  // names another place.
   const placement = useRef<{ view: EditorView; offset?: number }>(undefined);
   useEffect(() => {
     const view = control.current;
     if (!view) return;
     if (placement.current?.view !== view) placement.current = { view, offset: file.top };
-    const state = placement.current;
+    const placing = placement.current;
     let frames = 0;
     const place = () => {
       if (!view.dom.clientHeight) return false;
-      if (state.offset !== undefined) {
-        view.scrollDOM.scrollTop = state.offset;
+      if (placing.offset !== undefined) {
+        view.scrollDOM.scrollTop = placing.offset;
         // A view that has only measured the screenful it starts with cannot scroll that far yet, so it is asked again on
         // a later frame; one that still cannot after a second has been shown a shorter text than it was left at.
-        if (Math.abs(view.scrollDOM.scrollTop - state.offset) > 1 && frames < 60) return false;
-        state.offset = undefined;
+        if (Math.abs(view.scrollDOM.scrollTop - placing.offset) > 1 && frames < 60) return false;
+        placing.offset = undefined;
         return true;
       }
       if (file.line === undefined) return true;
@@ -285,7 +327,7 @@ function EditorPage({ file, text, remember, peeking, navigate, jumps }: { file: 
       if (!place()) frame = requestAnimationFrame(again);
     });
     return () => cancelAnimationFrame(frame);
-  }, [file.line, file.column, text, session]);
+  }, [file.line, file.column, text]);
   // A right click asks this plugin's menu instead of the browser's: the entries are the features the server answers.
   useEffect(() => {
     const host = element.current;
@@ -305,12 +347,12 @@ function EditorPage({ file, text, remember, peeking, navigate, jumps }: { file: 
     host.addEventListener('contextmenu', openMenu);
     return () => host.removeEventListener('contextmenu', openMenu);
   }, [session]);
-  // The keyboard belongs in the editor, unless the page is only showing what a picker's selection stands for, where
-  // taking it would end the name being typed.
-  const focusEditor = () => { if (!peeking) control.current?.focus(); };
+  // The keyboard belongs in the editor, unless the page is only showing what a picker's selection stands for or a box is
+  // being typed into — the address, and vim's own `:` line — where taking it would end what is being typed.
+  const focusEditor = () => { if (!peeking && !writing(document.activeElement)) control.current?.focus(); };
   // The keyboard is handed over again for each thing that changes who should have it: a peek takes it and gives it back, and
-  // a view built again is a new one to hand it to — so the list below is the peeking, the text and the server.
-  useEffect(() => { focusEditor(); }, [peeking, text, session]);
+  // a view built for a new text is a new one to hand it to.
+  useEffect(() => { focusEditor(); }, [peeking, text]);
   // A key that shows this view leaves the keyboard on the plugin's page rather than in the editor, so the page hands it
   // over when it hears that it was shown — a listener here, since the page's focus alone does not say who shows it.
   useEffect(() => {
@@ -343,27 +385,81 @@ function Shell({ children }: { children: ReactNode }) {
   return <section className="editor" aria-label="编辑器">{children}</section>;
 }
 
-function FileView(props: NavigationProps & { holder: string; remember: Remember; peeking: boolean; jumps: Jumps }) {
-  const { context, file, holder, navigate, refresh, back, forward, remember, peeking, openSearch, jumps } = props;
+function FileView({ context, file, navigate, back, forward, openSearch, holder, remember, peeking, jumps }: PageProps & { holder: string; remember: Remember; peeking: boolean; jumps: Jumps }) {
+  // The text the next view is built with, which only a read sets; `baseline`, what the file itself holds; and `pageText`, the
+  // text the view holds now, which is what a write puts in the file.
   const [text, setText] = useState<string>();
-  const [error, setError] = useState('');
-  // A file is read again when the path it names changes, not when the cursor moves inside it.
+  const baseline = useRef('');
+  const pageText = useRef('');
+  // The text this page last put in the file, and how many times it has done so: a read still on its way when a write
+  // lands is answering about the file as it was before it.
+  const sent = useRef('');
+  const writes = useRef(0);
+  // A read that failed leaves nothing to show; a write that failed is told on the header, with the text still on the page.
+  const [readError, setReadError] = useState('');
+  const [writeError, setWriteError] = useState('');
+  const draftKey = fileKey(file);
+  // What has not been written back sits in `drafts`, and `dirty` — the mark the header draws — is kept with it, so the two
+  // never part.
+  const [dirty, setDirty] = useState(false);
+  const hold = useCallback((draft?: string) => {
+    if (draft === undefined) drafts.delete(draftKey); else drafts.set(draftKey, draft);
+    setDirty(draft !== undefined);
+  }, [draftKey]);
+  const [refreshes, setRefreshes] = useState(0);
+  // A file is read when this page is built and again when the refresh asks for it: the page is built for one file, so the
+  // path it shows cannot change under it, and a jump inside the file does not read it again.
   useEffect(() => {
     let alive = true;
-    setText(undefined); setError('');
-    const read = () => {
-      void context.ui.request<string>('read', file).then((text) => { if (alive) { setText(text); setError(''); } })
-        .catch((error: Error) => { if (alive) setError(error.message); });
+    setText(undefined); setReadError('');
+    // `quiet` marks a read the page did not ask for, the file changing on disk, where one that brings back what this page
+    // last wrote is no news — the file holds it already, and what was typed after that write has not reached the file. A
+    // page that has not written anything yet has nothing to hear its own echo in.
+    const read = ({ draft, quiet }: { draft?: string; quiet?: boolean }) => {
+      const writesAtRead = writes.current;
+      void context.ui.request<string>('read', file).then((content) => {
+        if (!alive || writes.current !== writesAtRead) return;
+        if (quiet && writesAtRead > 0 && content === sent.current) return;
+        baseline.current = content;
+        hold(draft);
+        const drawn = draft ?? content;
+        pageText.current = drawn;
+        setText(drawn);
+        setReadError('');
+        setWriteError('');
+      }).catch((problem: Error) => { if (alive) setReadError(problem.message); });
     };
-    const stop = watch(context, file.machine, holder, [file.path], read);
-    read();
+    const stop = watch(context, file.machine, holder, [file.path], () => read({ quiet: true }));
+    read({ draft: drafts.get(draftKey) });
     return () => { alive = false; stop(); };
-  }, [context, holder, file.path]);
+  }, [context, holder, refreshes, hold]);
+  // The refresh: what has not been written back is dropped first, since the read that answers it puts back the draft it
+  // finds, and only then is the file asked for.
+  const refresh = () => { hold(undefined); setRefreshes((count) => count + 1); };
+  const editing: Editing = {
+    onDoc(edited) {
+      pageText.current = edited;
+      hold(edited === baseline.current ? undefined : edited);
+    },
+    save() {
+      const whole = pageText.current;
+      void context.ui.request('write', { machine: file.machine, path: file.path, text: whole })
+        .then(() => {
+          writes.current += 1;
+          sent.current = whole;
+          baseline.current = whole;
+          // What was typed while the write was on its way is not in the file, so the mark stays up for it.
+          if (pageText.current === whole) hold(undefined);
+          setWriteError('');
+        })
+        .catch((problem: Error) => setWriteError(problem.message));
+    },
+  };
   return <Shell>
-    <Navigation context={context} file={file} navigate={navigate} refresh={refresh} back={back} forward={forward} openSearch={openSearch} />
-    {error ? <div className="file-message" role="alert">{error}</div>
+    <Navigation context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} dirty={dirty} refresh={refresh} writeError={writeError} />
+    {readError ? <div className="file-message" role="alert">{readError}</div>
       : text === undefined ? <div className="file-message">正在读取…</div>
-      : <EditorPage file={file} text={text} remember={remember} peeking={peeking} navigate={navigate} jumps={jumps} />}
+      : <EditorPage file={file} text={text} remember={remember} peeking={peeking} navigate={navigate} jumps={jumps} editing={editing} />}
   </Shell>;
 }
 
@@ -389,7 +485,7 @@ const Glass = ({ className }: { className?: string }) => (
   <svg className={className} viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4" /><path d="m10 10 4 4" /></svg>
 );
 
-// A text with the characters at those indexes marked, so a row shows why it is on the list. The indexes count UTF-16
+// A text with the characters at those indexes marked, so a row shows why it matched. The indexes count UTF-16
 // code units, as fuzzysort reports them, and neighbouring ones share a node: a hit is one block behind the text it
 // matched, however far apart the hits of one match are, and a character spelled by two units, such as an emoji, stays in
 // one piece. A text with nothing marked is handed back whole.
@@ -450,7 +546,9 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
     if (mode !== 'symbols') return;
     if (!options || !services) { setSymbols([]); return; }
     let alive = true;
-    void services.symbols(options).then((found) => { if (alive) setSymbols(found); });
+    void services.symbols(options)
+      .then((found) => { if (alive) { setSymbols(found); clearStatus('symbols'); } })
+      .catch((problem: Error) => { if (alive) { setSymbols([]); setStatus({ mode: 'symbols', text: problem.message }); } });
     return () => { alive = false; };
   }, [mode, options]);
   const asked = useRef(0);
@@ -510,9 +608,9 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
   }, [mode, needle, directory, visited.machine, visited.path, files, matches, symbols]);
   const note = status?.mode === mode ? status.text : '';
   // The index of the row standing for the entry the tab is on, if the rows hold it.
-  const current = rows.findIndex((row) => row.target.path === visited.path && (row.target.line === undefined || row.target.line === visited.line));
+  const entryRow = rows.findIndex((row) => row.target.path === visited.path && (row.target.line === undefined || row.target.line === visited.line));
   // Rows arrive after the keystroke that asked for them, so the chosen one is kept within what is on show.
-  const at = Math.min(chosen ?? Math.max(current, 0), Math.max(rows.length - 1, 0));
+  const at = Math.min(chosen ?? Math.max(entryRow, 0), Math.max(rows.length - 1, 0));
   useEffect(() => { list.current?.querySelector('[aria-current]')?.scrollIntoView({ block: 'nearest' }); }, [at, rows]);
   // A name typed a letter at a time would otherwise read a file per letter, so the row under the selection is taken
   // once the selection rests.
@@ -548,14 +646,15 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
 
 // What a tab shows before a file is sent to it: the address box, which reads a path against the workspace, and the one
 // line that says what the tab is waiting for — a failure, a read in flight, or where a file comes from.
-function EmptyPage({ context, base, navigate, loading, error }: { context: UiContext; base?: FileClick; navigate: (file: FileClick) => void; loading: boolean; error: string }) {
+function EmptyPage({ context, base, navigate, loading, workspaceError }: { context: UiContext; base?: FileClick; navigate: (file: FileClick) => void; loading: boolean; workspaceError: string }) {
   const [addressError, setAddressError] = useState('');
+  const headerMessage = addressError || workspaceError;
   return <Shell>
     <Header>
       <Address context={context} base={base} navigate={navigate} report={setAddressError} />
     </Header>
-    <div className="file-message" role={addressError || error ? 'alert' : undefined}>
-      {addressError || error || (loading ? '正在读取…' : base ? '在「文件」里点一个文件，或者在这里输入路径' : '请选择一个已连接的终端')}
+    <div className="file-message" role={headerMessage ? 'alert' : undefined}>
+      {headerMessage || (loading ? '正在读取…' : base ? '在「文件」里点一个文件，或者在这里输入路径' : '请选择一个已连接的终端')}
     </div>
   </Shell>;
 }
@@ -563,9 +662,9 @@ function EmptyPage({ context, base, navigate, loading, error }: { context: UiCon
 // The page a tab draws: the file on show with the search picker over it, or the empty page while no file has been sent
 // here.
 // `file` is what the page shows, which a picker's selection may stand in for, and `visited` the entry the tab is on.
-function Body({ context, workspaceId, file, visited, searching, remember, closeSearch, peek, jumps, ...navigation }: Omit<NavigationProps, 'file'> & { workspaceId?: string; file?: HistoryEntry; visited?: HistoryEntry; searching: boolean; remember: Remember; closeSearch: () => void; peek: (file: FileClick) => void; jumps: Jumps }) {
+function Body({ context, navigate, back, forward, openSearch, workspaceId, file, visited, searching, remember, closeSearch, peek, jumps }: Omit<PageProps, 'file'> & { workspaceId?: string; file?: HistoryEntry; visited?: HistoryEntry; searching: boolean; remember: Remember; closeSearch: () => void; peek: (file: FileClick) => void; jumps: Jumps }) {
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [workspaceError, setWorkspaceError] = useState('');
   // The directory of the workspace in front: what a path typed before any file is opened is resolved against, and the
   // root the search panel looks in.
   const [workspaceEntry, setWorkspaceEntry] = useState<FileClick>();
@@ -575,31 +674,28 @@ function Body({ context, workspaceId, file, visited, searching, remember, closeS
     const off = context.global.subscribe<WorkspaceActive | null>('workspace:active', (value) => {
       if (workspaceId !== undefined && value !== null && value.workspaceId !== workspaceId) return;
       const id = ++request;
-      setError(''); setLoading(value !== null);
+      setWorkspaceError(''); setLoading(value !== null);
       if (!value) return;
       void context.ui.request<FileClick>('resolve', value)
         .then((resolved) => { if (alive && id === request) { setWorkspaceEntry(resolved); setLoading(false); } })
-        .catch((problem: Error) => { if (alive && id === request) { setLoading(false); setError(problem.message); } });
+        .catch((problem: Error) => { if (alive && id === request) { setLoading(false); setWorkspaceError(problem.message); } });
     });
     void context.global.publish('workspace:query', null);
     return () => { alive = false; off(); };
   }, [context, workspaceId]);
-  if (!file) return <EmptyPage context={context} base={workspaceEntry} navigate={navigation.navigate} loading={loading} error={error} />;
+  if (!file) return <EmptyPage context={context} base={workspaceEntry} navigate={navigate} loading={loading} workspaceError={workspaceError} />;
   const workspace = workspaceEntry?.path ?? '';
-  // Only a different path or machine rebuilds the page.
-  const key = JSON.stringify([machineKey(file.machine), file.path]);
+  // Only a different file rebuilds the page.
+  const key = fileKey(file);
   return <div className={searching ? 'editor-body searching' : 'editor-body'}>
-    <FileView key={key} context={context} file={file} holder={workspaceId ?? ''} remember={remember} peeking={searching} jumps={jumps} {...navigation} />
-    {visited && searching && <Search context={context} visited={visited} workspace={workspace} peek={peek} navigate={navigation.navigate} close={closeSearch} />}
+    <FileView key={key} context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} holder={workspaceId ?? ''} remember={remember} peeking={searching} jumps={jumps} />
+    {visited && searching && <Search context={context} visited={visited} workspace={workspace} peek={peek} navigate={navigate} close={closeSearch} />}
   </div>;
 }
 
 export function open(context: UiContext, record?: TabRecord) {
   if (!record || record.id === identity.id) openTab(context, record?.workspaceId ?? activeWorkspaceId);
 }
-
-// Whether the keyboard is being typed into a box, which keeps its keys to itself.
-const writing = (target: EventTarget | null) => target instanceof HTMLElement && ['INPUT', 'TEXTAREA'].includes(target.tagName);
 
 function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
   const key = workspaceId ?? '';
@@ -613,15 +709,11 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
   // The entry the tab shows: what the picker is peeking at, or else the one its history points at.
   const showing = () => view.peeked ?? history.entries[history.index];
   const push = (file: FileClick) => {
-    const current = history.entries[history.index];
-    const same = current && machineKey(current.machine) === machineKey(file.machine) && current.type === file.type && current.path === file.path;
+    const standing = history.entries[history.index];
+    const same = standing && machineKey(standing.machine) === machineKey(file.machine) && standing.type === file.type && standing.path === file.path;
     // A file opened without a line is the visit already there, which keeps where it was left; a jump to a line of it is a
     // visit of its own, so going back returns to the line it left.
-    if (same && (file.line === undefined || (file.line === current.line && file.column === current.column))) {
-      // The view reads a new entry as a new visit, which is what puts back the path the address box was typed over.
-      history.entries[history.index] = { ...current };
-      return;
-    }
+    if (same && (file.line === undefined || (file.line === standing.line && file.column === standing.column))) return;
     history.entries = [...history.entries.slice(0, history.index + 1), file];
     history.index++;
     void context.ui.request('save-history', Object.fromEntries(histories));
@@ -654,7 +746,6 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
     const closeSearch = () => show();
     // The picker stays open where the name is being typed.
     const peek = (file: FileClick) => show({ searching: true, peeked: file });
-    const refresh = () => { history.entries[history.index] = { ...history.entries[history.index] }; render(); };
     // Walking the tab's history: the entry it lands on is saved with the rest, and the search it leaves is cleared.
     const step = (by: number) => {
       history.index += by;
@@ -667,20 +758,28 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       // A file left at its top is where a fresh open puts it, so there is no offset worth keeping.
       if (entry.top === 0) delete entry.top;
     };
-    // The keys this plugin answers itself: `<C-o>`/`<C-i>` walk the tab's list of jumps, `<C-f>` opens the search picker and
-    // `<C-s>` hands the file on show to the preview plugin. The vim layer answers `<C-o>`, `<C-i>` and `<C-f>` itself, so
-    // they are taken before it on the capture, and they are taken by the tab rather than by a page: a page is built after a
-    // key may already be on its way.
+    // The keys this plugin answers itself: `<C-s>` writes the file on show back to its disk, `<C-f>` opens the search picker
+    // and `<C-o>`/`<C-i>` walk the tab's list of jumps. The vim layer answers `<C-o>`, `<C-i>` and `<C-f>` itself, so those
+    // are taken before it on the capture, and every one of them is taken by the tab rather than by a page: a page is built
+    // after a key may already be on its way.
     const onKeyDown = (event: KeyboardEvent) => {
       // A tab that is not on show listens too, since the window hides a panel instead of taking it apart; and a box being
       // typed into keeps its keys.
       if (event.defaultPrevented || writing(event.target) || event.altKey || event.metaKey || !event.ctrlKey) return;
       if (!container.checkVisibility()) return;
       const pressed = event.key.toLowerCase();
+      if (pressed === 's') {
+        event.preventDefault();
+        event.stopPropagation();
+        const view = EditorView.findFromDOM(container);
+        if (view) pageKeys.get(view)?.save();
+        return;
+      }
+      // The rest need a tab that shows something: a picker without one has nothing to list, and a jump asks the machine of
+      // the entry it leaves.
       const shown = showing();
       if (!shown) return;
       if (pressed === 'f') { event.preventDefault(); event.stopPropagation(); openSearch(); return; }
-      if (pressed === 's') { event.preventDefault(); event.stopPropagation(); void context.global.publish('preview:open', shown); return; }
       if (pressed !== 'o' && pressed !== 'i') return;
       const forward = pressed === 'i';
       const target = jumps.entries[jumps.index + (forward ? 1 : -1)];
@@ -691,15 +790,20 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       navigate(visit(target, shown.machine));
     };
     addEventListener('keydown', onKeyDown, true);
-    const render = () => mounted.render(<Body context={context} workspaceId={workspaceId} jumps={jumps} file={showing()} visited={history.entries[history.index]} searching={view.searching}
+    const render = () => mounted.render(<Body
+      context={context}
       navigate={navigate}
-      remember={remember}
+      back={history.index > 0 ? () => step(-1) : undefined}
+      forward={history.index < history.entries.length - 1 ? () => step(1) : undefined}
       openSearch={openSearch}
+      workspaceId={workspaceId}
+      file={showing()}
+      visited={history.entries[history.index]}
+      searching={view.searching}
+      remember={remember}
       closeSearch={closeSearch}
       peek={peek}
-      refresh={refresh}
-      back={history.index > 0 ? () => step(-1) : undefined}
-      forward={history.index < history.entries.length - 1 ? () => step(1) : undefined} />);
+      jumps={jumps} />);
     return { onSelect: render, dispose: () => { mounted.unmount(); removeEventListener('keydown', onKeyDown, true); } };
   } });
 }
@@ -707,10 +811,10 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
 export async function mount(_container: HTMLElement, context: UiContext) {
   const profile: Settings = context.host.config;
   font = profile.font;
-  // The state is what keeps the text as it was read: the view stays editable in the DOM, since a content the browser is
-  // told not to take the keyboard for cannot hold the caret or answer the vim keys either. The selection a visual mode
-  // covers is drawn here, because the vim keys blank the browser's own ::selection without drawing one of their own.
-  chrome = [vim(), lineNumbers(), highlightActiveLine(), drawSelection(), ...editorTheme(profile.theme, font), EditorState.readOnly.of(true)];
+  // The vim keys over the text, which the page may edit and write back, and the history behind its undo. The selection a
+  // visual mode covers is drawn here, because the vim keys blank the browser's own ::selection without drawing one of
+  // their own.
+  chrome = [vim(), lineNumbers(), highlightActiveLine(), drawSelection(), undoHistory(), ...editorTheme(profile.theme, font)];
   services = new LanguageServices(context);
   for (const [key, history] of Object.entries(await context.ui.request<Record<string, History>>('history'))) histories.set(key, history);
   const offActive = context.global.subscribe<WorkspaceActive | null>('workspace:active', (value) => {
@@ -735,6 +839,7 @@ export async function mount(_container: HTMLElement, context: UiContext) {
     offActive();
     off();
     histories.clear();
+    drafts.clear();
     services?.dispose();
     services = undefined;
   };

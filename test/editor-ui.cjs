@@ -69,10 +69,11 @@ const waitForPath = (scope, path) => until(async () => (await pathBox(scope).fir
 // The code a panel's editor shows.
 const editorLines = (scope) => scope.locator('.editor-code .cm-content');
 const codeView = (scope, text) => editorLines(scope).filter({ hasText: text });
-// A panel pointed at a file, waited for by a line the file holds.
+// A panel pointed at a file, waited for by a line the file holds — or, for a file with nothing in it, by the editor that
+// draws it.
 const showFile = async (scope, path, text) => {
   await goToPath(scope, path);
-  await codeView(scope, text).waitFor();
+  await (text === undefined ? editorLines(scope) : codeView(scope, text)).waitFor();
 };
 // The lines the editor has drawn: a view that scrolled keeps the ones it drew before, so this is not only what is on
 // screen.
@@ -212,7 +213,6 @@ module.exports = {
   pathBox,
   goToPath,
   waitForPath,
-  editorLines,
   codeView,
   showFile,
   drawnLines,
