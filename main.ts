@@ -4,7 +4,7 @@ import type { MachineConnection, Process } from '@lengmoxxl/sdk';
 import type { MainContext } from '@lengmoxxl/sdk/channel';
 import { machineKey, type FileClick, type History, type LspClose, type LspData, type LspSession, type OpenOptions, type SearchHit, type Settings } from './shared';
 
-export const keys = { '<leader>fe': { global: true, desc: '打开编辑器视图', event: 'core:show-view', data: { plugin: 'editor' } } };
+export const keys = { '<leader>e': { global: true, desc: '打开编辑器视图', event: 'core:show-view', data: { plugin: 'editor' } } };
 
 // Fields this plugin takes from init.ts.
 export const config = {
