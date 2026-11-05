@@ -4,8 +4,14 @@ const { createWorkspace, openView, until } = require('@lengmoxxl/wangcai-testkit
 // The machine the window works on, which is the one a case's paths are read from.
 const machine = { id: 'local', name: '本机' };
 
-// What a case's window lists: the workspace a file link comes from, and the views the sidebar picks from.
-const lists = { workspaces: ['terminal-agent'], tabs: ['editor', 'terminal'] };
+// The ids the plugins have in `init.ts`.
+const terminalAgentPlugin = 'terminal-agent';
+const editorPlugin = 'editor';
+const terminalPlugin = 'terminal';
+const filesPlugin = 'files';
+
+// What a case's window lists: a workspace, and the views the sidebar picks from.
+const lists = { workspaces: [terminalAgentPlugin], tabs: [editorPlugin, terminalPlugin] };
 
 // A list redraws as the app reports, which can take away the row a drag starts from between the wait that found it and
 // the move that needs it, so a box is asked for again until one comes back.
@@ -31,13 +37,21 @@ const selectedViewTab = (page) => sidebarTabs(page).filter({ has: page.locator('
 const drawnCloseButtons = (page) => sidebarTabs(page).filter({ visible: true }).locator('.close-tab');
 const closeTab = (page, name) => page.getByRole('button', { name: `关闭 ${name}`, exact: true });
 
-// The window's two sidebars and the pane between them, plus the panel on show in the right one and every panel of this
-// plugin, hidden ones included.
+// The window's two sidebars and the pane between them, plus the panels of the right one, the ones on show among them.
 const sidebarLeft = (page) => page.locator('.sidebar-left');
 const sidebarRight = (page) => page.locator('.sidebar-right');
 const desktopMain = (page) => page.locator('.desktop-main');
-const shownPanel = (page) => page.locator('.sidebar-panel:visible');
-const editorPanels = (page) => page.locator('.sidebar-panel[data-plugin=editor]');
+const sidebarPanels = (page) => page.locator('.sidebar-panel');
+const shownPanel = (page) => sidebarPanels(page).filter({ visible: true });
+
+// Every element a plugin of that id drew.
+const pluginElements = (scope, plugin) => scope.locator(`[data-plugin=${plugin}]`);
+
+// The editor's sidebar panels, hidden ones included.
+const editorPanels = (page) => pluginElements(page, editorPlugin).and(sidebarPanels(page));
+
+// A column of the files view, named by the directory it lists.
+const filesColumn = (page, directory) => page.getByRole('navigation', { name: directory, exact: true });
 
 // The window's errors, which the cases collect and assert are empty.
 const collectErrors = (page, errors) => {
@@ -45,12 +59,13 @@ const collectErrors = (page, errors) => {
   page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
 };
 
-// The message the page shows for a path it cannot open: one it could not read, or one that is not there.
-const alert = (page) => page.getByRole('alert');
+// The message a panel shows for work it could not carry out: opening, reading or writing a file, or resolving the
+// workspace it sits in.
+const alert = (scope) => scope.getByRole('alert');
 
 // What the app keeps as it runs: the workspaces it has open, and the history this plugin has stored for them.
-const openWorkspaces = (page) => page.evaluate(async () => (await window.wangcai.call('request', 'terminal-agent', 'config')).workspaces);
-const storedHistory = (page) => page.evaluate(() => window.wangcai.call('request', 'editor', 'history'));
+const openWorkspaces = (page) => page.evaluate(async (plugin) => (await window.wangcai.call('request', plugin, 'config')).workspaces, terminalAgentPlugin);
+const storedHistory = (page) => page.evaluate((plugin) => window.wangcai.call('request', plugin, 'history'), editorPlugin);
 
 // A file link clicked in a terminal. The plugin subscribes as it mounts, so a click sent before that is gone.
 const clickFile = (page, file) => page.evaluate((click) => window.wangcai.call('publish', 'onclick', click), file);
@@ -133,7 +148,8 @@ const diagnostics = (scope) => codeSurface(scope).locator('[class*=cm-lintRange]
 // The buttons of a panel's header.
 const backButton = (page) => page.getByRole('button', { name: '后退', exact: true });
 const forwardButton = (page) => page.getByRole('button', { name: '前进', exact: true });
-const refreshButton = (page) => page.getByRole('button', { name: '刷新', exact: true });
+const refreshButton = (scope) => scope.getByRole('button', { name: '刷新', exact: true });
+const openDirectoryButton = (page) => page.getByRole('button', { name: '打开所在目录', exact: true });
 
 // The right sidebar is shown and hidden by its own button, and added to from the button beside it.
 const sidebarToggle = (page) => page.getByRole('button', { name: '切换右侧栏' });
@@ -156,7 +172,8 @@ const searchPanel = (scope) => scope.getByRole('dialog', { name: '搜索' });
 const searchInput = (scope) => searchPanel(scope).getByRole('textbox', { name: '搜索' });
 const searchRows = (scope) => searchPanel(scope).locator('.search-row');
 const searchRow = (scope, text) => searchRows(scope).filter({ hasText: text }).first();
-const filesEmpty = (scope) => searchPanel(scope).getByText('没有匹配的文件', { exact: true });
+const fileSearchEmpty = (scope) => searchPanel(scope).getByText('没有匹配的文件', { exact: true });
+
 // The runs of text the picker marked in the title of a row: neighbouring hits share a run, not one character each.
 const searchMarks = (row) => row.locator('.search-title b').allInnerTexts();
 
@@ -197,15 +214,11 @@ const openEditorWorkspace = async (page) => {
   await openView(page, editorView);
 };
 
-// A workspace opened, with one of its files shown: the panel on show, since a tab can be one of several.
-// A file written out and shown, waited for by a line of it: the page reads the disk, so the write comes first.
+// A file written out and shown: the page reads the disk, so the write comes first.
 const showWritten = async (page, path, body, line) => {
   writeFileSync(path, body);
-  await openOn(page, path, line);
-};
-const openOn = async (page, path, text) => {
   await openEditorWorkspace(page);
-  await showFile(shownPanel(page), path, text);
+  await showFile(shownPanel(page), path, line);
 };
 
 // Closes a workspace through the row's own menu, the way a person does.
@@ -216,8 +229,12 @@ const closeWorkspace = async (tab) => {
 
 module.exports = {
   machine,
+  terminalAgentPlugin,
+  editorPlugin,
+  filesPlugin,
   lists,
   boxOf,
+  editorView,
   workspaceBar,
   workspaceTabs,
   viewTab,
@@ -226,12 +243,13 @@ module.exports = {
   selectedViewTab,
   drawnCloseButtons,
   closeTab,
-  editorView,
   sidebarLeft,
   sidebarRight,
   desktopMain,
   shownPanel,
+  pluginElements,
   editorPanels,
+  filesColumn,
   collectErrors,
   alert,
   openWorkspaces,
@@ -239,34 +257,34 @@ module.exports = {
   clickFile,
   pathBox,
   goToPath,
-  waitForPath,
   shows,
+  waitForPath,
+  codeSurface,
+  codeShowing,
   lineShown,
   showAfter,
   showFile,
-  showWritten,
+  lineBoxes,
   drawnLines,
+  activeLineBox,
   cursorAt,
   landed,
   landedOn,
-  activeLineBox,
-  codeShowing,
-  editorFocused,
-  lineBoxes,
-  lspDot,
-  lspDetail,
-  placeFileName,
-  placeList,
-  placeRows,
-  placeText,
   selectionClass,
   selectionMarks,
+  editorFocused,
+  lspDot,
+  lspDetail,
+  placeList,
+  placeRows,
+  placeFileName,
+  placeText,
   hoverTips,
   diagnostics,
-  codeSurface,
   backButton,
   forwardButton,
   refreshButton,
+  openDirectoryButton,
   sidebarToggle,
   newSidebarTab,
   runIn,
@@ -275,7 +293,7 @@ module.exports = {
   searchInput,
   searchRows,
   searchRow,
-  filesEmpty,
+  fileSearchEmpty,
   searchMarks,
   openSearch,
   submitSearch,
@@ -283,5 +301,6 @@ module.exports = {
   dismissSearch,
   search,
   openEditorWorkspace,
+  showWritten,
   closeWorkspace,
 };

@@ -1,11 +1,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { statSync, writeFileSync } = require('node:fs');
+const { mkdirSync, statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { createWorkspace, until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { activeLineBox, alert, backButton, clickFile, collectErrors, drawnCloseButtons, drawnLines, editorPanels, editorTab, editorView, forwardButton, goToPath, landedOn, lineBoxes, lineShown, lists, machine, openEditorWorkspace, openWorkspaces, refreshButton, selectionClass, selectionMarks, showAfter, showFile, showWritten, shownPanel, shows, storedHistory, viewMenu, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
+const { activeLineBox, alert, backButton, clickFile, collectErrors, drawnCloseButtons, drawnLines, editorPanels, editorPlugin, editorTab, editorView, filesColumn, filesPlugin, forwardButton, goToPath, landedOn, lineBoxes, lineShown, lists, machine, openDirectoryButton, openEditorWorkspace, openWorkspaces, refreshButton, selectionClass, selectionMarks, showAfter, showFile, shownPanel, shows, showWritten, storedHistory, viewMenu, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
 
-// The line three of the files below open with.
+// An opening line for the pages of the cases that do not turn on which line comes first.
 const firstLine = 'const first = 1;';
 // How a case asks for a file to be opened: the payload the page takes for one visit.
 const visitTo = (path) => ({ type: 'file', machine, path });
@@ -43,6 +43,18 @@ test('a file with nothing in it opens as an empty page', { timeout: 120000 }, ()
   const empty = join(home, 'empty.ts');
   await showWritten(page, empty, '');
   assert.deepEqual(await drawnLines(page), ['']);
+  assert.deepEqual(errors, []);
+}));
+
+test('the header hands the directory the shown file sits in to the files view', { timeout: 120000 }, () => withWindow('wangcai-editor-files', { ...lists, tabs: [...lists.tabs, filesPlugin] }, async ({ home, page, errors }) => {
+  // A directory of its own under the workspace, so the column asked for below is not also the workspace root's.
+  const directory = join(home, 'inner');
+  mkdirSync(directory);
+  const listedName = 'listed.ts';
+  const file = join(directory, listedName);
+  await showWritten(page, file, '');
+  await openDirectoryButton(page).click();
+  await filesColumn(page, directory).getByRole('button', { name: listedName, exact: true }).waitFor();
   assert.deepEqual(errors, []);
 }));
 
@@ -121,7 +133,7 @@ test('a file is shown again where it was left', { timeout: 120000 }, () => withW
   assert.deepEqual(errors, []);
 }));
 
-test('navigation history recovers its position and follows workspace tab ownership', { timeout: 180000 }, () => withHome('wangcai-editor-recover', { workspaces: ['terminal-agent'], tabs: ['editor'] }, async ({ home, open }) => {
+test('navigation history recovers its position and follows workspace tab ownership', { timeout: 180000 }, () => withHome('wangcai-editor-recover', { ...lists, tabs: [editorPlugin] }, async ({ home, open }) => {
   let { page, close } = await open();
   const code = join(home, 'first.ts');
   const middle = join(home, 'middle.md');

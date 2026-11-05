@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { codeShowing, editorTab, lists, showWritten, shownPanel, shows, workspaceTabs } = require('./editor-ui.cjs');
+const { codeShowing, editorTab, lists, shownPanel, shows, showWritten, workspaceTabs } = require('./editor-ui.cjs');
 
 // The file both cases open, and the text it is opened with.
 const sampleFile = 'sample.ts';

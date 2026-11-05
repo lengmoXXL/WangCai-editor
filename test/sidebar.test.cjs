@@ -4,9 +4,9 @@ const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { activeTerminal, createWorkspace, openView, until, withHome } = require('@lengmoxxl/wangcai-testkit');
-const { backButton, boxOf, closeTab, closeWorkspace, codeShowing, collectErrors, desktopMain, drawnCloseButtons, editorPanels, editorTab, editorView, newSidebarTab, openWorkspaces, pathBox, runIn, selectedViewTab, showAfter, showFile, shownPanel, sidebarLeft, sidebarRight, sidebarTabs, sidebarToggle, viewMenu, viewTab, waitForPath, workspaceBar, workspaceTabs } = require('./editor-ui.cjs');
+const { backButton, boxOf, closeTab, closeWorkspace, codeShowing, collectErrors, desktopMain, drawnCloseButtons, editorPanels, editorPlugin, editorTab, editorView, lists, newSidebarTab, openWorkspaces, pathBox, pluginElements, runIn, selectedViewTab, showAfter, showFile, shownPanel, sidebarLeft, sidebarRight, sidebarTabs, sidebarToggle, terminalAgentPlugin, viewMenu, viewTab, waitForPath, workspaceBar, workspaceTabs } = require('./editor-ui.cjs');
 
-// The strings the case pins: its own plugin's view title and field, the folder and files it opens, the page in each of
+// The strings the case pins: its own plugin's view title and field, the directory and files it opens, the page in each of
 // them, and the colour the cards and tabs are drawn with.
 const viewTitle = '测试视图';
 const viewField = '视图内容';
@@ -30,7 +30,7 @@ const openEditorView = async (page) => {
 test('the sidebar switches views, and draws its cards, drops and dividers', { timeout: 180000 }, () => {
   // A plugin of the case's own, which draws a view the sidebar can be switched to.
   const other = mkdtempSync(join(tmpdir(), 'wangcai-sidebar-other-'));
-  return withHome('wangcai-sidebar', { workspaces: ['terminal-agent'], tabs: ['editor', { id: otherPlugin, directory: other }] }, async ({ home, open }) => {
+  return withHome('wangcai-sidebar', { ...lists, tabs: [editorPlugin, { id: otherPlugin, directory: other }] }, async ({ home, open }) => {
     const pluginMain = 'exports.activate = () => {};';
     const otherUi = `
       export const title = '${viewTitle}';
@@ -77,7 +77,7 @@ test('the sidebar switches views, and draws its cards, drops and dividers', { ti
     assert.ok(plusBox.x - lastTabBox.x - lastTabBox.width < 10);
     assert.ok(toggleBox.x > plusBox.x + plusBox.width);
     assert.ok(await panels.isHidden());
-    assert.ok(await main.locator('[data-plugin=terminal-agent]').isVisible());
+    assert.ok(await pluginElements(main, terminalAgentPlugin).isVisible());
     assert.equal(await shown.count(), 1);
     await openView(page, editorView);
     await createWorkspace(page);

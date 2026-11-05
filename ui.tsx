@@ -35,6 +35,9 @@ type Jumps = { entries: Target[]; index: number };
 const drafts = new Map<string, string>();
 const fileKey = (file: FileClick) => `${machineKey(file.machine)}|${file.path}`;
 
+// The directory a visit points into: a directory is its own, and a file's is the one it sits in.
+const directoryOf = (file: FileClick) => (file.type === 'directory' ? file.path : file.path.slice(0, file.path.lastIndexOf('/')) || '/');
+
 // The page the editor hangs from: the element the Core hands the keys to and takes them back from.
 const pageOf = (element: HTMLElement | null) => element?.closest<HTMLElement>('[data-plugin]');
 
@@ -89,7 +92,8 @@ type PageProps = { context: UiContext; file: HistoryEntry; navigate: (file: File
 // A place in a file, counted from zero the way a server is asked about it.
 type Place = { line: number; character: number };
 
-// The address box: what is typed is resolved against the directory the tab is on, and the entry it names is opened.
+// The address box: what is typed is resolved against the directory this visit points into, and the entry it names is
+// opened.
 function Address({ context, base, navigate, report }: { context: UiContext; base?: FileClick; navigate: (file: FileClick) => void; report: (message: string) => void }) {
   const [path, setPath] = useState(base?.path ?? '');
   const request = useRef(0);
@@ -99,8 +103,7 @@ function Address({ context, base, navigate, report }: { context: UiContext; base
     if (!base || !path.trim()) return;
     const id = ++request.current;
     report('');
-    const at = base.type === 'directory' ? base.path : base.path.slice(0, base.path.lastIndexOf('/')) || '/';
-    void context.ui.request<FileClick>('resolve', { machine: base.machine, path: path.trim(), base: at })
+    void context.ui.request<FileClick>('resolve', { machine: base.machine, path: path.trim(), base: directoryOf(base) })
       .then((file) => { if (id === request.current) navigate(file); })
       .catch((problem: Error) => { if (id === request.current) report(problem.message); });
   }}>
@@ -161,7 +164,11 @@ function Navigation({ context, file, navigate, back, forward, openSearch, dirty,
       {dirty && <span className="editor-dirty" role="status" aria-label="有未写回的改动" title="有未写回的改动">*</span>}
       <div className="editor-tail">
         <LspStatus file={file} />
-        <button className="editor-icon" aria-label="预览" title="在 preview 里打开" onClick={() => void context.global.publish('preview:open', file)}>
+        <button className="editor-icon" aria-label="打开所在目录" title="在 files 里打开当前文件所在的目录"
+          onClick={() => navigate({ type: 'directory', machine: file.machine, path: directoryOf(file) })}>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 2H14V12H2V4.5Z" /></svg>
+        </button>
+        <button className="editor-icon" aria-label="预览" title="在 preview 里打开当前文件" onClick={() => void context.global.publish('preview:open', file)}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8Z" /><circle cx="8" cy="8" r="1.8" /></svg>
         </button>
         <button className="editor-icon" aria-label="搜索" title="搜索" onClick={openSearch}>
@@ -568,8 +575,8 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
   const [status, setStatus] = useState<{ mode: SearchMode; text: string }>();
   const clearStatus = (source: SearchMode) => setStatus((current) => (current?.mode === source ? undefined : current));
   const list = useRef<HTMLDivElement>(null);
-  // Where a search starts: the workspace, or else the directory the tab's own entry sits in.
-  const directory = workspace || visited.path.slice(0, visited.path.lastIndexOf('/')) || '/';
+  // Where a search starts: the workspace, or else the directory this visit points into.
+  const directory = workspace || directoryOf(visited);
   const mode: SearchMode = query.startsWith('>') ? 'grep' : query.startsWith('@') ? 'symbols' : 'files';
   const needle = (mode === 'files' ? query : query.slice(1)).trim();
   // What this picker asks a server about, which changes with the machine and path `serviceFor` reads.
@@ -694,7 +701,7 @@ function EmptyPage({ context, base, navigate, loading, workspaceError }: { conte
       <Address context={context} base={base} navigate={navigate} report={setAddressError} />
     </Header>
     <div className="file-message" role={headerMessage ? 'alert' : undefined}>
-      {headerMessage || (loading ? '正在读取…' : base ? '在「文件」里点一个文件，或者在这里输入路径' : '请选择一个已连接的终端')}
+      {headerMessage || (loading ? '正在读取…' : base ? '在 files 里点一个文件，或者在这里输入路径' : '请选择一个已连接的终端')}
     </div>
   </Shell>;
 }
@@ -774,7 +781,7 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       render();
     };
     const navigate = (file: FileClick) => {
-      // The address box takes a path of either kind, and a directory is the files view's to draw.
+      // A directory is the files view's to draw, so it is handed on rather than opened here.
       if (file.type === 'directory') {
         void context.global.publish('onclick', file);
         return;
@@ -868,8 +875,8 @@ export async function mount(_container: HTMLElement, context: UiContext) {
     }
   });
   void context.global.publish('workspace:query', null);
-  // The click a file link makes lands here for a file, which is what the tab then shows; a directory is the files view's
-  // to show, and it has a tab of its own.
+  // Every file click a plugin publishes lands here, and the tab then shows that file; a directory is the files view's to
+  // draw, and the files view has a tab of its own.
   const off = context.global.subscribe<FileClick>('onclick', (file) => {
     if (file.type !== 'file') return;
     openTab(context, activeWorkspaceId, file);

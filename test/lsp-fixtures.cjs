@@ -2,7 +2,7 @@ const { execFileSync } = require('node:child_process');
 const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-const { lists, lspDot, showWritten, shownPanel } = require('./editor-ui.cjs');
+const { editorPlugin, lists, lspDot, shownPanel, showWritten } = require('./editor-ui.cjs');
 
 // The compiler options a server is asked about, strict enough to report a type error: every TypeScript project here is
 // written with them.
@@ -39,7 +39,7 @@ const languageServers = (home) => pids('bin/typescript-language-server --stdio')
 const unexpected = (errors) => errors.filter((text) => !text.includes('Request timed out'));
 
 // A window whose rust server is the command given: the rest of its plugin list is the one every case runs.
-const rustServer = (command) => ({ ...lists, tabs: [{ id: 'editor', config: { lsp: { rust: { command } } } }, 'terminal'] });
+const rustServer = (command) => ({ ...lists, tabs: lists.tabs.map((tab) => (tab === editorPlugin ? { id: tab, config: { lsp: { rust: { command } } } } : tab)) });
 
 // A server that counts its own starts in a file of its own, and `lives` says which start is the one that stays past the
 // window that gives a server its tries back: every other start dies at once.

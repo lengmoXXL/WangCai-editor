@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { chmodSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { alert, backButton, codeShowing, drawnLines, editorFocused, lists, refreshButton, showAfter, showFile, showWritten, shownPanel } = require('./editor-ui.cjs');
+const { alert, backButton, codeShowing, drawnLines, editorFocused, lists, refreshButton, showAfter, showFile, shownPanel, showWritten } = require('./editor-ui.cjs');
 
 // The key the plugin answers a write with itself, beside the `:w` that `writeWithEx` below types.
 const saveKey = 'Control+s';
@@ -93,19 +93,19 @@ test('a refresh drops what has not been written back and draws the file as it is
 }));
 
 test('a save that fails says so on the header and keeps what is on the page', { timeout: 120000 }, () => withWindow('wangcai-editor-save-fails', lists, async ({ home, page, errors }) => {
-  const folder = join(home, 'fenced');
-  mkdirSync(folder);
-  const file = join(folder, 'fenced.ts');
+  const directory = join(home, 'fenced');
+  mkdirSync(directory);
+  const file = join(directory, 'fenced.ts');
   await showWritten(page, file, keptBody, keptLine);
   await typeInto(page, noteBody);
   // A directory the node cannot write into is a write that fails while the text is there to be kept.
-  chmodSync(folder, 0o555);
+  chmodSync(directory, 0o555);
   await page.keyboard.press(saveKey);
   await alert(shownPanel(page)).filter({ hasText: 'Permission denied' }).waitFor();
   assert.deepEqual(await drawnLines(page), [noteLine, keptLine, '']);
   assert.equal(await dirtyMark(shownPanel(page)).count(), 1);
   assert.equal(readFileSync(file, 'utf8'), keptBody);
-  chmodSync(folder, 0o755);
+  chmodSync(directory, 0o755);
   await page.keyboard.press(saveKey);
   await wroteBack(page, file, writtenBody);
   assert.equal(await alert(shownPanel(page)).count(), 0);

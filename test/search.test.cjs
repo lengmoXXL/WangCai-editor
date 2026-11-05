@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { mkdirSync, writeFileSync } = require('node:fs');
 const { basename, join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { codeShowing, dismissSearch, editorFocused, filesEmpty, landedOn, lists, openSearch, search, searchInput, searchMarks, searchPanel, searchRow, searchRows, showWritten, shownPanel, shows, submitSearch, waitForPath } = require('./editor-ui.cjs');
+const { codeShowing, dismissSearch, editorFocused, fileSearchEmpty, landedOn, lists, openSearch, search, searchInput, searchMarks, searchPanel, searchRow, searchRows, shownPanel, shows, showWritten, submitSearch, waitForPath } = require('./editor-ui.cjs');
 
 test('the search box finds files and text, and Enter opens what it found', { timeout: 120000 }, () => withWindow('wangcai-editor-search', lists, async ({ home, page, errors }) => {
   const main = join(home, 'main.ts');
@@ -59,7 +59,7 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   await dismissSearch(page);
   assert.ok(await shows(shownPanel(page), main));
 
-  // A row is a whole path, and a query that runs through a folder into the name marks both on that one line.
+  // A row is a whole path, and a query that runs through a directory into the name marks both on that one line.
   mkdirSync(join(home, 'deep/dir'), { recursive: true });
   const pathTail = 'dir/path';
   const onlyFile = join(home, 'deep', `${pathTail}-only.ts`);
@@ -95,7 +95,7 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   // The list has to be in before the query is typed: an empty list is also what the picker shows while it waits for one.
   await searchRows(page).first().waitFor();
   await searchInput(page).fill('nst');
-  await filesEmpty(page).waitFor();
+  await fileSearchEmpty(page).waitFor();
   await dismissSearch(page);
 
   // A grep answer longer than the page draws is cut at the row limit: 25 files of 10 matching lines, and 200 rows drawn.
