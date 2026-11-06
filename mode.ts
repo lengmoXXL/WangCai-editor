@@ -2,6 +2,7 @@ import { cpp as cppLang } from '@codemirror/lang-cpp';
 import { css } from '@codemirror/lang-css';
 import { go } from '@codemirror/lang-go';
 import { html as htmlLang } from '@codemirror/lang-html';
+import { java } from '@codemirror/lang-java';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
 import { markdown as markdownLang } from '@codemirror/lang-markdown';
@@ -33,7 +34,7 @@ const modes: Record<string, Language> = {
   jsx: { id: 'javascriptreact', mode: () => javascript({ jsx: true }) },
   json: { id: 'json', mode: json }, md, markdown: md,
   html, htm: html, css: { id: 'css', mode: css },
-  py: { id: 'python', mode: python }, rs: { id: 'rust', mode: rust },
+  py: { id: 'python', mode: python }, rs: { id: 'rust', mode: rust }, java: { id: 'java', mode: java },
   c, h: c, cc: cpp, cpp, cxx: cpp, hpp: cpp, hh: cpp,
   go: { id: 'go', mode: go }, yaml, yml: yaml,
   sh, bash: sh, zsh: sh,

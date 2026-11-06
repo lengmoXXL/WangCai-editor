@@ -29,6 +29,7 @@ const languageServers: Record<string, LanguageServer> = {
   go: { commands: [['gopls']], markers: ['go.mod', 'go.work'] },
   rust: { commands: [['rust-analyzer']], markers: ['Cargo.toml'] },
   c: clangd, cpp: clangd,
+  java: { commands: [['jdtls']], markers: ['pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'] },
   python: { commands: [['pyright-langserver', '--stdio'], ['pylsp']], markers: ['pyproject.toml', 'setup.py', 'requirements.txt'] },
   shell: { commands: [['bash-language-server', 'start']], markers: [] },
 };

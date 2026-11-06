@@ -38,16 +38,16 @@ const languageServers = (home) => pids('bin/typescript-language-server --stdio')
 // failure these cases are about, and it is not a page's own error.
 const unexpected = (errors) => errors.filter((text) => !text.includes('Request timed out'));
 
-// A window whose rust server is the command given: the rest of its plugin list is the one every case runs.
-const rustServer = (command) => ({ ...lists, tabs: lists.tabs.map((tab) => (tab === editorPlugin ? { id: tab, config: { lsp: { rust: { command } } } } : tab)) });
+// A window whose server for one language is the command given: the rest of its plugin list is the one every case runs.
+const serverFor = (language, command) => ({ ...lists, tabs: lists.tabs.map((tab) => (tab === editorPlugin ? { id: tab, config: { lsp: { [language]: { command } } } } : tab)) });
 
 // A server that counts its own starts in a file of its own, and `lives` says which start is the one that stays past the
 // window that gives a server its tries back: every other start dies at once.
 const countingServer = (name, lives) => {
   const file = join(tmpdir(), `wangcai-${name}-${process.pid}-${Date.now()}`);
-  return { file, server: rustServer(['/bin/sh', '-c', `n=$(($(cat '${file}' 2>/dev/null || echo 0)+1)); echo $n > '${file}'; [ ${lives} ] && sleep 40; exit 1`]) };
+  return { file, server: serverFor('rust', ['/bin/sh', '-c', `n=$(($(cat '${file}' 2>/dev/null || echo 0)+1)); echo $n > '${file}'; [ ${lives} ] && sleep 40; exit 1`]) };
 };
 // How many times the server of a case has started, as its own command counts them in that file.
 const starts = (file) => (existsSync(file) ? Number(readFileSync(file, 'utf8')) : 0);
 
-module.exports = { openTs, openRust, pids, languageServers, unexpected, rustServer, countingServer, starts };
+module.exports = { openTs, openRust, pids, languageServers, unexpected, serverFor, countingServer, starts };

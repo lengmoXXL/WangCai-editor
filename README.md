@@ -43,6 +43,7 @@ tabs: [
 | CSS | `css` |
 | Python | `py` |
 | Rust | `rs` |
+| Java | `java` |
 | C / C++ | `c` `h` `cc` `cpp` `cxx` `hpp` `hh` |
 | Go | `go` |
 | YAML | `yaml` `yml` |
@@ -104,6 +105,7 @@ tabs: [
 | `go` | `gopls` | `go.mod` `go.work` |
 | `rust` | `rust-analyzer` | `Cargo.toml` |
 | `c` `cpp` | `clangd` | `compile_commands.json` `.clangd` `CMakeLists.txt` |
+| `java` | `jdtls` | `pom.xml` `build.gradle` `build.gradle.kts` `settings.gradle` `settings.gradle.kts` |
 | `python` | `pyright-langserver --stdio`，没有就用 `pylsp` | `pyproject.toml` `setup.py` `requirements.txt` |
 | `shell` | `bash-language-server start` | 无 |
 

@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const { writeFileSync } = require('node:fs');
 const { basename, join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { alert, backButton, closeWorkspace, codeSurface, cursorAt, diagnostics, dismiss, dismissSearch, editorFocused, hoverTips, landed, landedOn, lineBoxes, lists, lspDetail, lspDot, placeFileName, placeList, placeRows, placeText, search, searchPanel, searchRow, showFile, shownPanel, storedHistory, submitSearch, workspaceTabs } = require('./editor-ui.cjs');
-const { languageServers, openRust, openTs, rustServer } = require('./lsp-fixtures.cjs');
+const { alert, backButton, closeWorkspace, codeSurface, cursorAt, diagnostics, dismiss, dismissSearch, editorFocused, hoverTips, landed, landedOn, lineBoxes, lists, lspDetail, lspDot, noServerReason, placeFileName, placeList, placeRows, placeText, search, searchPanel, searchRow, showFile, shownPanel, showWritten, storedHistory, submitSearch, workspaceTabs } = require('./editor-ui.cjs');
+const { languageServers, openRust, openTs, serverFor } = require('./lsp-fixtures.cjs');
 
 // The name the shapes file a case writes is imported by, so that the specifier and the path agree.
 const shapesName = 'shapes';
@@ -304,18 +304,20 @@ test('the list of references is walked with the vim keys and opened with Enter',
   assert.deepEqual(errors, []);
 }));
 
-// The command Rust's server is configured with, which this machine does not have.
+// A command this machine does not have, which a case gives a language's server so that it cannot start.
 const missingCommand = 'no-such-language-server';
 
-test('a language with no server on this machine says so on its dot, and the page stays quiet', { timeout: 120000 }, () => withWindow('wangcai-editor-missing-server', rustServer([missingCommand]), async ({ home, page, errors }) => {
+test('a language with no server on this machine says so on its dot, and the page stays quiet', { timeout: 120000 }, () => withWindow('wangcai-editor-missing-server', serverFor('rust', [missingCommand]), async ({ home, page, errors }) => {
   await openRust(home, page);
-  const dot = lspDot(shownPanel(page), 'missing');
-  const detail = lspDetail(shownPanel(page));
-  await dot.waitFor();
-  await dot.hover();
   // The reason a server is not there is read on the dot, and the page raises nothing of its own about it.
-  await until(async () => (await detail.innerText()).includes('未启动'));
-  assert.match(await detail.innerText(), new RegExp(missingCommand));
+  assert.match(await noServerReason(page), new RegExp(missingCommand));
   assert.equal(await alert(page).count(), 0);
+  assert.deepEqual(errors, []);
+}));
+
+test('a java file is read as java, so the command java names is the one it asks about', { timeout: 120000 }, () => withWindow('wangcai-editor-java-server', serverFor('java', [missingCommand]), async ({ home, page, errors }) => {
+  await showWritten(page, join(home, 'Demo.java'), '');
+  // The language the file is read as is what picks the entry, so a file read as anything else asks about another command.
+  assert.match(await noServerReason(page), new RegExp(missingCommand));
   assert.deepEqual(errors, []);
 }));

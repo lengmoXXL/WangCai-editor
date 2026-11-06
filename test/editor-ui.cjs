@@ -150,6 +150,15 @@ const editorFocused = (page) => codeSurface(page).evaluateAll((scopes) => scopes
 const lspDot = (scope, state) => scope.locator(`.editor-lsp.${state}`);
 // The panel that names that service while the pointer rests on the dot.
 const lspDetail = (scope) => scope.locator('.editor-lsp-detail');
+// The reason a service is not there, read off its dot and waited for: the detail the pointer opens on it.
+const noServerReason = async (page) => {
+  const dot = lspDot(shownPanel(page), 'missing');
+  const detail = lspDetail(shownPanel(page));
+  await dot.waitFor();
+  await dot.hover();
+  await until(async () => (await detail.innerText()).includes('未启动'));
+  return detail.innerText();
+};
 // The panel a question about a place in the file opens, by the title the question gives it.
 const placeList = (scope, title) => scope.getByRole('dialog', { name: title });
 // The places that panel lists, one row each.
@@ -256,9 +265,6 @@ const closeWorkspace = async (tab) => {
 };
 
 module.exports = {
-  activeTerminal,
-  createWorkspace,
-  openView,
   machine,
   terminalAgentPlugin,
   editorPlugin,
@@ -268,6 +274,8 @@ module.exports = {
   editorView,
   workspaceBar,
   workspaceTabs,
+  activeTerminal,
+  createWorkspace,
   viewTab,
   editorTab,
   sidebarTabs,
@@ -306,6 +314,7 @@ module.exports = {
   editorFocused,
   lspDot,
   lspDetail,
+  noServerReason,
   placeList,
   placeRows,
   placeFileName,
@@ -320,6 +329,7 @@ module.exports = {
   newSidebarTab,
   runIn,
   viewMenu,
+  openView,
   searchPanel,
   searchInput,
   searchRows,
