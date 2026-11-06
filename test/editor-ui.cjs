@@ -1,5 +1,5 @@
 const { writeFileSync } = require('node:fs');
-const { createWorkspace, openView, until } = require('@lengmoxxl/wangcai-testkit');
+const { until } = require('@lengmoxxl/wangcai-testkit');
 
 // The machine the window works on, which is the one a case's paths are read from.
 const machine = { id: 'local', name: '本机' };
@@ -27,6 +27,27 @@ const editorView = '编辑器';
 // The window's tab strips: a tab per workspace on the left, and the sidebar's own tabs on the right.
 const workspaceBar = (page) => page.locator('.workspaces');
 const workspaceTabs = (page) => workspaceBar(page).getByRole('tab');
+
+// The menu that makes a workspace is the space under the rows, which end above the list's bottom edge: the click lands
+// on the list rather than on a row.
+const openWorkspaceMenu = async (page) => {
+  const box = await boxOf(workspaceBar(page));
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height - 4, { button: 'right' });
+};
+
+/** The terminal of the workspace in front: the app's own pane, not a plugin's panel. */
+const activeTerminal = (page) => page.locator('.terminal-pane.active');
+
+/** Waits until the terminal in front draws that text, which it does once the shell has written it. */
+const terminalShows = (page, text) => activeTerminal(page).locator('.xterm-screen').filter({ hasText: text }).waitFor();
+
+/** Opens a local workspace, and waits for the shell its pane draws a moment after the workspace appears. */
+const createWorkspace = async (page) => {
+  await openWorkspaceMenu(page);
+  await page.locator('#workspace-row-menu').getByRole('menuitem', { name: '新建 本机', exact: true }).click();
+  await terminalShows(page, /\S/);
+};
+
 const viewTab = (page, name) => page.getByRole('tablist', { name: '侧栏标签页' }).getByRole('tab', { name, exact: true });
 const editorTab = (page) => viewTab(page, editorView);
 
@@ -166,6 +187,13 @@ const runIn = async (pane, line) => {
 // The menu a view is picked from, once that button has opened it.
 const viewMenu = (page) => page.locator('#view-menu');
 
+/** Opens a view in the sidebar, showing the sidebar first when it is off screen. */
+const openView = async (page, name) => {
+  if (!(await newSidebarTab(page).isVisible())) await sidebarToggle(page).click();
+  await newSidebarTab(page).click();
+  await viewMenu(page).getByRole('button', { name, exact: true }).click();
+};
+
 // The search picker a panel opens: the panel it draws in, the input a query goes into, the rows it found, and the message
 // a search for files shows when it finds none.
 const searchPanel = (scope) => scope.getByRole('dialog', { name: '搜索' });
@@ -228,6 +256,9 @@ const closeWorkspace = async (tab) => {
 };
 
 module.exports = {
+  activeTerminal,
+  createWorkspace,
+  openView,
   machine,
   terminalAgentPlugin,
   editorPlugin,

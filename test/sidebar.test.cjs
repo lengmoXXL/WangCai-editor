@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-const { activeTerminal, createWorkspace, openView, until, withHome } = require('@lengmoxxl/wangcai-testkit');
-const { backButton, boxOf, closeTab, closeWorkspace, codeShowing, collectErrors, desktopMain, drawnCloseButtons, editorPanels, editorPlugin, editorTab, editorView, lists, newSidebarTab, openWorkspaces, pathBox, pluginElements, runIn, selectedViewTab, showAfter, showFile, shownPanel, sidebarLeft, sidebarRight, sidebarTabs, sidebarToggle, terminalAgentPlugin, viewMenu, viewTab, waitForPath, workspaceBar, workspaceTabs } = require('./editor-ui.cjs');
+const { until, withHome } = require('@lengmoxxl/wangcai-testkit');
+const { activeTerminal, backButton, boxOf, closeTab, closeWorkspace, codeShowing, collectErrors, createWorkspace, desktopMain, drawnCloseButtons, editorPanels, editorPlugin, editorTab, editorView, lists, newSidebarTab, openView, openWorkspaces, pathBox, pluginElements, runIn, selectedViewTab, showAfter, showFile, shownPanel, sidebarLeft, sidebarRight, sidebarTabs, sidebarToggle, terminalAgentPlugin, viewMenu, viewTab, waitForPath, workspaceBar, workspaceTabs } = require('./editor-ui.cjs');
 
 // The strings the case pins: its own plugin's view title and field, the directory and files it opens, the page in each of
 // them, and the colour the cards and tabs are drawn with.

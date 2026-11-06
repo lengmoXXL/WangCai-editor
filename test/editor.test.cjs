@@ -2,8 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { mkdirSync, statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { createWorkspace, until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { activeLineBox, alert, backButton, clickFile, collectErrors, drawnCloseButtons, drawnLines, editorPanels, editorPlugin, editorTab, editorView, filesColumn, filesPlugin, forwardButton, goToPath, landedOn, lineBoxes, lineShown, lists, machine, openDirectoryButton, openEditorWorkspace, openWorkspaces, refreshButton, selectionClass, selectionMarks, showAfter, showFile, shownPanel, shows, showWritten, storedHistory, viewMenu, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
+const { until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
+const { activeLineBox, alert, backButton, clickFile, collectErrors, createWorkspace, drawnCloseButtons, drawnLines, editorPanels, editorPlugin, editorTab, editorView, filesColumn, filesPlugin, forwardButton, goToPath, landedOn, lineBoxes, lineShown, lists, machine, openDirectoryButton, openEditorWorkspace, openWorkspaces, refreshButton, selectionClass, selectionMarks, showAfter, showFile, shownPanel, shows, showWritten, storedHistory, viewMenu, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
 
 // An opening line for the pages of the cases that do not turn on which line comes first.
 const firstLine = 'const first = 1;';
