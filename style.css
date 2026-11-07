@@ -31,7 +31,7 @@
 .editor-lsp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--wc-muted); }
 .editor-lsp.open .editor-lsp-dot { background: var(--wc-accent); }
 .editor-lsp.closed .editor-lsp-dot, .editor-lsp.missing .editor-lsp-dot { background: var(--wc-yellow); }
-.editor-lsp-detail, .code-menu, .lsp-places { background: var(--wc-background); border: 1px solid var(--wc-border); border-radius: 5px; box-shadow: 0 10px 28px #0006; }
+.editor-lsp-detail, .code-menu, .lsp-places, .notice { background: var(--wc-background); border: 1px solid var(--wc-border); border-radius: 5px; box-shadow: 0 10px 28px #0006; }
 /* The backdrop closes the menu it is under, so it must not be part of a region the window is dragged by: a click on one
    moves the window instead of landing here. */
 .editor-backdrop { position: fixed; inset: 0; z-index: 5; -webkit-app-region: no-drag; }
@@ -49,6 +49,9 @@
 /* The place in the file keeps its whole width, so it is the name that is cut. */
 .lsp-place-at { flex: none; color: var(--wc-muted); }
 .file-message { padding: 16px; color: var(--wc-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* What a page says went wrong is laid over it rather than holding a row of it open, and it takes no pointer: the text under
+   it stays clickable for as long as it is up. */
+.notice { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); z-index: 6; max-width: 80%; padding: 6px 12px; white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; color: var(--wc-foreground); }
 
 /* The page and the search picker over it: the picker is placed against this box, so a page that changes under it
    does not take the picker along. It takes the lower half rather than covering it, so a page that follows the selection

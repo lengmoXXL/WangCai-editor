@@ -83,7 +83,7 @@ test('a refresh drops what has not been written back and draws the file as it is
   assert.deepEqual(errors, []);
 }));
 
-test('a save that fails says so on the header and keeps what is on the page', { timeout: 120000 }, () => withWindow('wangcai-editor-save-fails', lists, async ({ home, page, errors }) => {
+test('a save that fails says so over the page, keeps what is on the page, and takes the word back by itself', { timeout: 120000 }, () => withWindow('wangcai-editor-save-fails', lists, async ({ home, page, errors }) => {
   const directory = join(home, 'fenced');
   mkdirSync(directory);
   const file = join(directory, 'fenced.ts');
@@ -96,10 +96,17 @@ test('a save that fails says so on the header and keeps what is on the page', { 
   assert.deepEqual(await drawnLines(page), [noteLine, keptLine, '']);
   assert.equal(await dirtyMark(shownPanel(page)).count(), 1);
   assert.equal(readFileSync(file, 'utf8'), keptBody);
+  // A write that lands takes the word back with it.
   chmodSync(directory, 0o755);
   await page.keyboard.press(saveKey);
   await wroteBack(page, file, writtenBody);
   assert.equal(await alert(shownPanel(page)).count(), 0);
+  // One that is not answered leaves on its own, with nothing done to dismiss it.
+  chmodSync(directory, 0o555);
+  await page.keyboard.press(saveKey);
+  await alert(shownPanel(page)).filter({ hasText: 'Permission denied' }).waitFor();
+  await until(async () => (await alert(shownPanel(page)).count()) === 0);
+  chmodSync(directory, 0o755);
   assert.deepEqual(errors, []);
 }));
 

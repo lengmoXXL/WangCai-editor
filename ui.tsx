@@ -147,38 +147,51 @@ function LspStatus({ file }: { file: HistoryEntry }) {
   </div>;
 }
 
-function Navigation({ context, file, navigate, back, forward, openSearch, dirty, refresh, writeError }: PageProps & { dirty: boolean; refresh: () => void; writeError: string }) {
-  const [addressError, setAddressError] = useState('');
-  const headerMessage = addressError || writeError;
-  return <>
-    <Header>
-      <button className="editor-icon" aria-label="后退" title="后退" disabled={!back} onClick={back}>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 3 2 8l5 5 M2 8h12" /></svg>
+// How long a page says what went wrong before it takes it back: a failure is news, so nothing a reader does or leaves
+// undone keeps it up.
+const noticeFor = 4000;
+
+function useNotice(): [string, (text: string) => void] {
+  const [notice, report] = useState('');
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => report(''), noticeFor);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  return [notice, report];
+}
+
+function Notice({ text }: { text: string }) {
+  return text ? <div className="notice" role="alert">{text}</div> : null;
+}
+
+function Navigation({ context, file, navigate, back, forward, openSearch, dirty, refresh, report }: PageProps & { dirty: boolean; refresh: () => void; report: (text: string) => void }) {
+  return <Header>
+    <button className="editor-icon" aria-label="后退" title="后退" disabled={!back} onClick={back}>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 3 2 8l5 5 M2 8h12" /></svg>
+    </button>
+    <button className="editor-icon" aria-label="前进" title="前进" disabled={!forward} onClick={forward}>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m9 3 5 5-5 5 M2 8h12" /></svg>
+    </button>
+    <button className="editor-icon" aria-label="刷新" title="刷新" onClick={refresh}>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.3 6.7A5.3 5.3 0 1 0 12 12 M13.3 2.7v4h-4" /></svg>
+    </button>
+    <Address context={context} base={file} navigate={navigate} report={report} />
+    {dirty && <span className="editor-dirty" role="status" aria-label="有未写回的改动" title="有未写回的改动">*</span>}
+    <div className="editor-tail">
+      <LspStatus file={file} />
+      <button className="editor-icon" aria-label="打开所在目录" title="在 files 里打开当前文件所在的目录"
+        onClick={() => navigate({ type: 'directory', machine: file.machine, path: directoryOf(file) })}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 2H14V12H2V4.5Z" /></svg>
       </button>
-      <button className="editor-icon" aria-label="前进" title="前进" disabled={!forward} onClick={forward}>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m9 3 5 5-5 5 M2 8h12" /></svg>
+      <button className="editor-icon" aria-label="预览" title="在 preview 里打开当前文件" onClick={() => void context.global.publish('preview:open', file)}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8Z" /><circle cx="8" cy="8" r="1.8" /></svg>
       </button>
-      <button className="editor-icon" aria-label="刷新" title="刷新" onClick={refresh}>
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.3 6.7A5.3 5.3 0 1 0 12 12 M13.3 2.7v4h-4" /></svg>
+      <button className="editor-icon" aria-label="搜索" title="搜索" onClick={openSearch}>
+        <Glass />
       </button>
-      <Address context={context} base={file} navigate={navigate} report={setAddressError} />
-      {dirty && <span className="editor-dirty" role="status" aria-label="有未写回的改动" title="有未写回的改动">*</span>}
-      <div className="editor-tail">
-        <LspStatus file={file} />
-        <button className="editor-icon" aria-label="打开所在目录" title="在 files 里打开当前文件所在的目录"
-          onClick={() => navigate({ type: 'directory', machine: file.machine, path: directoryOf(file) })}>
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 2H14V12H2V4.5Z" /></svg>
-        </button>
-        <button className="editor-icon" aria-label="预览" title="在 preview 里打开当前文件" onClick={() => void context.global.publish('preview:open', file)}>
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8Z" /><circle cx="8" cy="8" r="1.8" /></svg>
-        </button>
-        <button className="editor-icon" aria-label="搜索" title="搜索" onClick={openSearch}>
-          <Glass />
-        </button>
-      </div>
-    </Header>
-    {headerMessage && <div className="file-message" role="alert">{headerMessage}</div>}
-  </>;
+    </div>
+  </Header>;
 }
 
 // A question a place in a file can be asked of a server: the name the menu offers it under, and the title of the panel that
@@ -438,9 +451,9 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
   // lands is answering about the file as it was before it.
   const sent = useRef('');
   const writes = useRef(0);
-  // A read that failed leaves nothing to show; a write that failed is told on the header, with the text still on the page.
+  // A read that failed leaves nothing to show; a write that failed is said over the page, with the text still on it.
   const [readError, setReadError] = useState('');
-  const [writeError, setWriteError] = useState('');
+  const [notice, report] = useNotice();
   const draftKey = fileKey(file);
   // What has not been written back sits in `drafts`, and `dirty` — the mark the header draws — is kept with it, so the two
   // never part.
@@ -469,7 +482,7 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
         pageText.current = drawn;
         setText(drawn);
         setReadError('');
-        setWriteError('');
+        report('');
       }).catch((problem: Error) => { if (alive) setReadError(problem.message); });
     };
     const stop = watch(context, file.machine, holder, [file.path], () => read({ quiet: true }));
@@ -493,13 +506,14 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
           baseline.current = whole;
           // What was typed while the write was on its way is not in the file, so the mark stays up for it.
           if (pageText.current === whole) hold(undefined);
-          setWriteError('');
+          report('');
         })
-        .catch((problem: Error) => setWriteError(problem.message));
+        .catch((problem: Error) => report(problem.message));
     },
   };
   return <Shell>
-    <Navigation context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} dirty={dirty} refresh={refresh} writeError={writeError} />
+    <Navigation context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} dirty={dirty} refresh={refresh} report={report} />
+    <Notice text={notice} />
     {readError ? <div className="file-message" role="alert">{readError}</div>
       : text === undefined ? <div className="file-message">正在读取…</div>
       : <EditorPage file={file} text={text} remember={remember} peeking={peeking} navigate={navigate} editing={editing} />}
@@ -683,14 +697,14 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
 // What a tab shows before a file is sent to it: the address box, which reads a path against the workspace, and the one
 // line that says what the tab is waiting for — a failure, a read in flight, or where a file comes from.
 function EmptyPage({ context, base, navigate, loading, workspaceError }: { context: UiContext; base?: FileClick; navigate: (file: FileClick) => void; loading: boolean; workspaceError: string }) {
-  const [addressError, setAddressError] = useState('');
-  const headerMessage = addressError || workspaceError;
+  const [notice, report] = useNotice();
   return <Shell>
     <Header>
-      <Address context={context} base={base} navigate={navigate} report={setAddressError} />
+      <Address context={context} base={base} navigate={navigate} report={report} />
     </Header>
-    <div className="file-message" role={headerMessage ? 'alert' : undefined}>
-      {headerMessage || (loading ? '正在读取…' : base ? '在 files 里点一个文件，或者在这里输入路径' : '请选择一个已连接的终端')}
+    <Notice text={notice} />
+    <div className="file-message" role={workspaceError ? 'alert' : undefined}>
+      {workspaceError || (loading ? '正在读取…' : base ? '在 files 里点一个文件，或者在这里输入路径' : '请选择一个已连接的终端')}
     </div>
   </Shell>;
 }
