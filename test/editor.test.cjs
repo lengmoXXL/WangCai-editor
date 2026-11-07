@@ -58,6 +58,34 @@ test('the header hands the directory the shown file sits in to the files view', 
   assert.deepEqual(errors, []);
 }));
 
+// The window's leader, which the keys below start from.
+const leader = 'Control+Space';
+
+test('the leader keys hand the file on show to the preview, and its directory to the files view', { timeout: 120000 }, () => withWindow('wangcai-editor-leader', { ...lists, tabs: [...lists.tabs, filesPlugin] }, async ({ home, page, errors }) => {
+  // A directory of its own, so the column read below is not also the workspace root's.
+  const directory = join(home, 'leader');
+  mkdirSync(directory);
+  const file = join(directory, 'shown.ts');
+  await showWritten(page, file, '');
+  // What the preview is handed is taken off the bus: the press is what is under test, not that view.
+  await page.evaluate(() => {
+    window.previews = [];
+    window.wangcai.subscribe('preview:open', (data) => window.previews.push(data.path));
+  });
+  for (const key of [leader, 'g', 'p']) await page.keyboard.press(key);
+  await until(async () => (await page.evaluate(() => window.previews.length)) === 1);
+  assert.deepEqual(await page.evaluate(() => window.previews), [file]);
+  // The same leader, then `gf`: files opens the directory the file sits in.
+  for (const key of [leader, 'g', 'f']) await page.keyboard.press(key);
+  await filesColumn(page, directory).getByRole('button', { name: 'shown.ts', exact: true }).waitFor();
+  // They are this page's keys, so a press made with the keyboard nowhere in it answers nothing.
+  await page.evaluate(() => document.activeElement?.blur());
+  for (const key of [leader, 'g', 'p']) await page.keyboard.press(key);
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => window.previews.length), 1);
+  assert.deepEqual(errors, []);
+}));
+
 test('a selection is painted on the line the cursor is on, which keeps a fill of its own', { timeout: 120000 }, () => withWindow('wangcai-editor-selection', lists, async ({ home, page, errors }) => {
   // The colour a layer that paints nothing reports, which is what "painted" is measured against: a layer painting none
   // lets what is beneath it show.

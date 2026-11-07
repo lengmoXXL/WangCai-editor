@@ -4,7 +4,14 @@ import type { MachineConnection, Process } from '@lengmoxxl/sdk';
 import type { MainContext } from '@lengmoxxl/sdk/channel';
 import { machineKey, type FileClick, type History, type LspClose, type LspData, type LspSession, type OpenOptions, type SearchHit, type Settings } from './shared';
 
-export const keys = { '<leader>e': { global: true, insert: true, desc: '打开编辑器视图', event: 'core:show-view', data: { plugin: 'editor' } } };
+// The keys this plugin brings: `<leader>e` shows the view wherever the keys are, while the other two name no `global`
+// and so answer only while this page holds them — they go out as events, since the file they act on is the one the page
+// on show reads, which the main process has no view of.
+export const keys = {
+  '<leader>e': { global: true, insert: true, desc: '打开编辑器视图', event: 'core:show-view', data: { plugin: 'editor' } },
+  '<leader>gp': { insert: true, desc: '在 preview 里打开当前文件', event: 'editor:preview' },
+  '<leader>gf': { insert: true, desc: '在 files 里打开文件所在的目录', event: 'editor:reveal' },
+};
 
 // Fields this plugin takes from init.ts.
 export const config = {

@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import fuzzysort from 'fuzzysort';
 import type { WorkspaceActive } from '@lengmoxxl/sdk';
+import { bindKeys } from '@lengmoxxl/sdk/keys';
 import type { TabRecord, UiContext } from '@lengmoxxl/sdk/channel';
 import { LanguageServices, type FileSymbol, type LocationFeature, type ServiceStatus, type Target } from './lsp';
 import { languageOf, modeFor } from './mode';
@@ -792,34 +793,31 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       // A file left at its top is where a fresh open puts it, so there is no offset worth keeping.
       if (entry.top === 0) delete entry.top;
     };
-    // The keys this plugin answers itself: `<C-s>` writes the file on show back to its disk, `<C-f>` opens the search picker
-    // and `<C-o>`/`<C-i>` walk the tab's history. The vim layer answers `<C-o>`, `<C-i>` and `<C-f>` itself, so those
-    // are taken before it on the capture, and every one of them is taken by the tab rather than by a page: a page is built
-    // after a key may already be on its way.
-    const onKeyDown = (event: KeyboardEvent) => {
-      // A tab that is not on show listens too, since the window hides a panel instead of taking it apart; and a box being
-      // typed into keeps its keys.
-      if (event.defaultPrevented || writing(event.target) || event.altKey || event.metaKey || !event.ctrlKey) return;
-      if (!container.checkVisibility()) return;
-      const pressed = event.key.toLowerCase();
-      if (pressed === 's') {
-        event.preventDefault();
-        event.stopPropagation();
-        const view = EditorView.findFromDOM(container);
-        if (view) pageKeys.get(view)?.save();
-        return;
-      }
-      // The rest need a tab that shows something: a picker without one has nothing to list.
-      if (!showing()) return;
-      if (pressed === 'f') { event.preventDefault(); event.stopPropagation(); openSearch(); return; }
-      if (pressed !== 'o' && pressed !== 'i') return;
-      const by = pressed === 'i' ? 1 : -1;
-      if (!canStep(by)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      step(by);
-    };
-    addEventListener('keydown', onKeyDown, true);
+    // The keys this page answers itself, in the SDK's keymap: `<C-s>` writes the file on show back to its disk, `<C-f>`
+    // opens the search picker and `<C-o>`/`<C-i>` walk the tab's history. `insert` is what lets them answer while a field
+    // holds the keys, which is where the vim layer would otherwise take `<C-o>`, `<C-i>` and `<C-f>` for itself; the page
+    // they are bound to is the tab that has the keyboard, so no other tab answers them.
+    const keys = [
+      { keys: '<C-s>', insert: true, run: () => { const view = EditorView.findFromDOM(container); if (view) pageKeys.get(view)?.save(); } },
+      { keys: '<C-f>', insert: true, run: () => { if (showing()) openSearch(); } },
+      { keys: '<C-o>', insert: true, run: () => { if (canStep(-1)) step(-1); } },
+      { keys: '<C-i>', insert: true, run: () => { if (canStep(1)) step(1); } },
+    ];
+    // A box being typed into keeps its keys: the address, the picker's box and vim's own `:` line.
+    const unbindKeys = bindKeys(container, keys, { ignore: (event) => event.defaultPrevented || writing(event.target) });
+    // The two leader keys the window binds for this page, `<leader>gp` for the preview and `<leader>gf` for the directory
+    // files opens, reach it as events: the window matches the leader press before any page hears it. Every mounted tab is
+    // told, so the one on show is the one that answers.
+    const offEvents = [
+      context.global.subscribe('editor:preview', () => {
+        const file = showing();
+        if (file && container.checkVisibility()) void context.global.publish('preview:open', file);
+      }),
+      context.global.subscribe('editor:reveal', () => {
+        const file = showing();
+        if (file && container.checkVisibility()) navigate({ type: 'directory', machine: file.machine, path: directoryOf(file) });
+      }),
+    ];
     const render = () => mounted.render(<Body
       context={context}
       navigate={navigate}
@@ -834,7 +832,7 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       closeSearch={closeSearch}
       peek={peek}
       />);
-    return { onSelect: render, dispose: () => { mounted.unmount(); removeEventListener('keydown', onKeyDown, true); } };
+    return { onSelect: render, dispose: () => { mounted.unmount(); unbindKeys(); for (const off of offEvents) off(); } };
   } });
 }
 
