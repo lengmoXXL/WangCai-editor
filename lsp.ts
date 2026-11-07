@@ -20,7 +20,8 @@ export type Target = { path: string; line: number; column: number };
 const uriOf = (path: string) => `file://${path.split('/').map(encodeURIComponent).join('/')}`;
 const pathOf = (uri: string) => decodeURIComponent(uri.replace(/^file:\/\//, ''));
 
-type Range = { start: { line: number; character: number } };
+type Position = { line: number; character: number };
+type Range = { start: Position; end: Position };
 type State = 'connecting' | 'open' | 'closed';
 // What the dot shows about the service behind a file: which server it is, where its root is, and how it is doing.
 export type ServiceStatus = { server: string; root?: string; state: State | 'missing'; error?: string; log?: string };
@@ -154,41 +155,52 @@ class Session {
   }
 }
 
-// A symbol as either form a server answers a document's symbols in: a file's own tree, whose nested entries are what they
-// are declared in, or a flat list that carries each one's range in a location.
-type ServerSymbol = { name: string; kind?: number; range?: Range; selectionRange?: Range; location?: { range: Range }; children?: ServerSymbol[] };
-// What the picker lists for a file: a declaration, under the name of whatever declares it.
-export type FileSymbol = { name: string; container?: string; line: number; column: number };
+type TreeSymbol = { name: string; kind: number; selectionRange: Range; children?: TreeSymbol[] };
+type FlatSymbol = { name: string; kind: number; containerName?: string; location: { range: Range } };
+type ServerSymbol = TreeSymbol | FlatSymbol;
+export type FileSymbol = { name: string; line: number; column: number; children?: FileSymbol[] };
 
-// The symbol kinds whose children are declarations of their own: a type of any language holds its members, and a file
-// holds what it declares. Anything else — a function, a statement, a JSX child — holds statements and locals.
+// Module, namespace, class, enum, interface, object, struct.
 const containers = new Set([2, 3, 5, 10, 11, 19, 23]);
-// What a file declares: everything a container is, and the kinds that only ever declare a single thing — a function, a
-// variable or constant, an object.
-const declarations = new Set([...containers, 12, 13, 14]);
-// What a type declares, which a file's declaration list shows as well: its methods, properties, fields, constructor and enum
-// members.
-const members = new Set([6, 7, 8, 9, 22]);
+// Containers plus method, property, field, constructor, function, constant, enum member.
+const listed = new Set([...containers, 6, 7, 8, 9, 12, 14, 22]);
 // A server describes what it cannot name with a placeholder — `<unknown>`, `<function>`, `[computed]`, `a.map() callback` —
 // and nothing a reader can look up has such a name.
 const unnamed = (name: string) => name.startsWith('<') || name.startsWith('[') || name.includes(' callback');
+const isTree = (item: ServerSymbol): item is TreeSymbol => 'selectionRange' in item;
 
-// A file's symbols, the way an editor's outline reads it: what the file declares, and the members of the types it declares,
-// walking into an entry only where `containers` says its children are declarations too.
 function outline(items: ServerSymbol[]): FileSymbol[] {
-  const symbols: FileSymbol[] = [];
-  const walk = (entries: ServerSymbol[], container?: string) => {
-    for (const item of entries) {
-      if (unnamed(item.name)) continue;
-      const kind = item.kind ?? 0;
-      if (!declarations.has(kind) && (container === undefined || !members.has(kind))) continue;
-      const range = item.selectionRange ?? item.location?.range ?? item.range;
-      symbols.push({ name: item.name, container, line: (range?.start.line ?? 0) + 1, column: (range?.start.character ?? 0) + 1 });
-      if (item.children && containers.has(kind)) walk(item.children, [...(container ? [container] : []), item.name].join(' · '));
-    }
+  const atOrBefore = (a: Position, b: Position) => a.line < b.line || (a.line === b.line && a.character <= b.character);
+  const covers = (outer: FlatSymbol, inner: FlatSymbol) => {
+    const outerSpan = outer.location.range;
+    const innerSpan = inner.location.range;
+    return atOrBefore(outerSpan.start, innerSpan.start) && atOrBefore(innerSpan.end, outerSpan.end);
   };
-  walk(items);
-  return symbols;
+  // Flat answers carry no hierarchy; container names and covering ranges give a best-effort grouping.
+  const byName = new Map<string, FlatSymbol[]>();
+  for (const item of items) {
+    if (isTree(item)) continue;
+    byName.set(item.name, [...(byName.get(item.name) ?? []), item]);
+  }
+  const held = new Map<FlatSymbol, FlatSymbol[]>();
+  const roots: ServerSymbol[] = [];
+  for (const item of items) {
+    if (isTree(item)) { roots.push(item); continue; }
+    const possibleHolders = (item.containerName === undefined ? [] : byName.get(item.containerName) ?? [])
+      .filter((candidate) => candidate !== item && covers(candidate, item));
+    const holder: FlatSymbol | undefined = possibleHolders.length === 0
+      ? undefined
+      : possibleHolders.reduce((innermost, candidate) => (covers(innermost, candidate) ? candidate : innermost));
+    if (holder === undefined) roots.push(item);
+    else held.set(holder, [...(held.get(holder) ?? []), item]);
+  }
+  const branch = (entries: ServerSymbol[]): FileSymbol[] => entries.flatMap((item) => {
+    if (unnamed(item.name) || !listed.has(item.kind)) return [];
+    const range = isTree(item) ? item.selectionRange : item.location.range;
+    const children = containers.has(item.kind) ? branch(isTree(item) ? item.children ?? [] : held.get(item) ?? []) : [];
+    return [{ name: item.name, line: range.start.line + 1, column: range.start.character + 1, ...(children.length === 0 ? {} : { children }) }];
+  });
+  return branch(roots);
 }
 
 // A question is asked again while its answer is not one the caller can use, for as many rounds as the caller will wait: a
@@ -353,10 +365,10 @@ export class LanguageServices {
       const result = await found.request<unknown>(features[feature].method, {
         textDocument: { uri: uriOf(options.path) }, position: { line, character }, ...extra,
       }).catch(() => undefined);
-      const listed = Array.isArray(result) ? result : result ? [result] : [];
-      return listed.map((item: { uri?: string; targetUri?: string; range?: Range; targetSelectionRange?: Range }) => {
-        const range = item.targetSelectionRange ?? item.range ?? { start: { line: 0, character: 0 } };
-        return { path: pathOf(item.targetUri ?? item.uri ?? uriOf(options.path)), line: range.start.line + 1, column: range.start.character + 1 };
+      const places = Array.isArray(result) ? result : result ? [result] : [];
+      return (places as ({ uri: string; range: Range } | { targetUri: string; targetSelectionRange: Range })[]).map((item) => {
+        const [uri, range] = 'targetUri' in item ? [item.targetUri, item.targetSelectionRange] : [item.uri, item.range];
+        return { path: pathOf(uri), line: range.start.line + 1, column: range.start.character + 1 };
       });
     };
     // A jump only names this file while the server has not read the program yet: it answers with the import a name came in

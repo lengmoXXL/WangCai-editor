@@ -3,11 +3,12 @@ const assert = require('node:assert/strict');
 const { writeFileSync } = require('node:fs');
 const { basename, join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { alert, backButton, closeWorkspace, codeSurface, cursorAt, diagnostics, dismiss, dismissSearch, editorFocused, hoverTips, landed, landedOn, lineBoxes, lists, lspDetail, lspDot, noServerReason, placeFileName, placeList, placeRows, placeText, search, searchPanel, searchRow, showFile, shownPanel, showWritten, storedHistory, submitSearch, workspaceTabs } = require('./editor-ui.cjs');
-const { languageServers, openRust, openTs, serverFor } = require('./lsp-fixtures.cjs');
+const { alert, backButton, closeWorkspace, codeShowing, codeSurface, cursorAt, diagnostics, dismiss, dismissSearch, editorFocused, hoverTips, landed, landedOn, lineBoxes, lists, lspDetail, lspDot, noServerReason, placeFileName, placeList, placeRows, placeText, queryApplied, search, searchInput, searchMarks, searchPanel, searchRowEntries, searchRowNamed, showFile, shownPanel, showWritten, storedHistory, submitSearch, typeInto, workspaceTabs } = require('./editor-ui.cjs');
+const { areaNameAt, flatBody, flatNames, flatServer, languageServers, openRust, openTs, serverFor, treeBody, treeNames, treeServer } = require('./lsp-fixtures.cjs');
 
 // The name the shapes file a case writes is imported by, so that the specifier and the path agree.
 const shapesName = 'shapes';
+const stubName = 'Demo.ts';
 
 // The tokens, lines and panel titles the cases below share, so that each is written once and read by name.
 const answerToken = 'answer';
@@ -246,13 +247,82 @@ test('the jump keys ask the server, walk back through where they were made, and 
 
 test('the search box offers the symbols of the file the tab is on', { timeout: 90000 }, () => withWindow('wangcai-editor-symbols', lists, async ({ home, page, errors }) => {
   const computeToken = 'computeTotal';
-  const symbolsBody = `export function ${computeToken}() {\n  return 1;\n}\n\n${shapeBlock}\n`;
+  const counterToken = 'counter';
+  const bodyClassToken = 'BodyClass';
+  const sameToken = 'Same';
+  const echoToken = 'echo';
+  const symbolsBody = `${answerLine}\n\nlet ${counterToken} = 0;\n\nexport function ${computeToken}() {\n  class ${bodyClassToken} {}\n  return ${counterToken};\n}\n\n${shapeBlock}\n\nexport namespace ${sameToken} {\n  export namespace ${sameToken} {\n    export function ${echoToken}() {}\n  }\n}\n`;
   const main = await openTs(home, page, symbolsBody, computeToken);
   // A leading @ asks the file's server for its symbols, and a row jumps into the declaration it names.
   await search(page, `@${shapeToken}`);
-  await searchRow(page, shapeToken).waitFor({ timeout: 60000 });
+  await searchRowNamed(page, shapeToken).waitFor({ timeout: 60000 });
   await submitSearch(page);
   await landedOn(page, main, interfaceLine);
+  await search(page, '@');
+  await searchRowNamed(page, areaToken).first().waitFor({ timeout: 60000 });
+  assert.equal(await searchRowNamed(page, answerToken).count(), 1);
+  assert.equal(await searchRowNamed(page, computeToken).count(), 1);
+  assert.equal(await searchRowNamed(page, counterToken).count(), 0);
+  assert.equal(await searchRowNamed(page, bodyClassToken).count(), 0);
+  const entries = await searchRowEntries(page);
+  assert.deepEqual(entries.filter((row) => row.text === areaToken), [
+    { text: areaToken, depth: 1, holder: shapeToken },
+    { text: areaToken, depth: 1, holder: squareToken },
+  ]);
+  assert.deepEqual(entries.filter((row) => row.text === sameToken), [
+    { text: sameToken, depth: 0, holder: undefined },
+    { text: sameToken, depth: 1, holder: sameToken },
+  ]);
+  assert.deepEqual(entries.find((row) => row.text === echoToken), { text: echoToken, depth: 2, holder: sameToken });
+  await dismissSearch(page);
+  assert.deepEqual(errors, []);
+}));
+
+test('a server that answers with a tree has its members listed under the holder they sit in', { timeout: 90000 }, () => withWindow('wangcai-editor-tree-symbols', treeServer, async ({ home, page, errors }) => {
+  const demo = join(home, stubName);
+  await showWritten(page, demo, treeBody);
+  const areaRow = searchRowNamed(page, treeNames.area);
+  assert.equal(await areaRow.count(), 0);
+  await search(page, '@');
+  await areaRow.waitFor({ timeout: 60000 });
+  const unlisted = [treeNames.local, treeNames.value];
+  for (const name of Object.values(treeNames)) {
+    assert.equal(await searchRowNamed(page, name).count(), unlisted.includes(name) ? 0 : 1, name);
+  }
+  const entries = await searchRowEntries(page);
+  assert.deepEqual(entries.find((row) => row.text === treeNames.area), { text: treeNames.area, depth: 2, holder: treeNames.shape });
+  assert.deepEqual(entries.find((row) => row.text === treeNames.run), { text: treeNames.run, depth: 1, holder: treeNames.module });
+  await searchInput(page).fill(`@${treeNames.area}`);
+  await queryApplied(page);
+  assert.deepEqual(await searchRowEntries(page), [
+    { text: treeNames.space, depth: 0, holder: undefined },
+    { text: treeNames.shape, depth: 1, holder: treeNames.space },
+    { text: treeNames.area, depth: 2, holder: treeNames.shape },
+  ]);
+  assert.deepEqual(await searchMarks(searchRowNamed(page, treeNames.space)), []);
+  assert.deepEqual(await searchMarks(searchRowNamed(page, treeNames.shape)), []);
+  await areaRow.click();
+  // Typing checks the exact cursor column; seeing the line alone would miss an incorrect selectionRange.
+  const nameLineText = treeBody.split('\n')[areaNameAt.line];
+  await landedOn(page, demo, nameLineText);
+  const typedChar = 'X';
+  await typeInto(page, typedChar);
+  await codeShowing(shownPanel(page), `${nameLineText.slice(0, areaNameAt.character)}${typedChar}${nameLineText.slice(areaNameAt.character)}`).waitFor();
+  assert.deepEqual(errors, []);
+}));
+
+test('a flat answer files each entry under the holder it names, as the tree form does', { timeout: 90000 }, () => withWindow('wangcai-editor-flat-symbols', flatServer, async ({ home, page, errors }) => {
+  await showWritten(page, join(home, stubName), flatBody);
+  await search(page, '@');
+  await searchRowNamed(page, flatNames.area).waitFor({ timeout: 60000 });
+  assert.deepEqual(await searchRowEntries(page), [
+    { text: flatNames.inner, depth: 0, holder: undefined },
+    { text: flatNames.inner, depth: 1, holder: flatNames.inner },
+    { text: flatNames.area, depth: 1, holder: flatNames.inner },
+    { text: flatNames.alone, depth: 0, holder: undefined },
+    { text: flatNames.stand, depth: 1, holder: flatNames.alone },
+  ]);
+  await dismissSearch(page);
   assert.deepEqual(errors, []);
 }));
 

@@ -522,41 +522,13 @@ const emptyMessage: Record<SearchMode, string> = {
   files: '没有匹配的文件', grep: '没有匹配的内容', symbols: '没有匹配的符号',
 };
 
-// A row of the picker: the texts it prints, the visit it stands for, and the characters a query marked in each — the
-// title's in `marks`, the detail's in `detailMarks`.
-type SearchRow = { key: string; title: string; detail?: string; target: FileClick; marks?: ReadonlyArray<number>; detailMarks?: ReadonlyArray<number> };
+type SearchRow = { key: string; title: string; detail?: string; depth?: number; target: FileClick; marks?: ReadonlyArray<number> };
 
 // The magnifier, drawn on the header's button and in the picker's row: one glyph, whose size and colour come from where it
 // is drawn.
 const Glass = ({ className }: { className?: string }) => (
   <svg className={className} viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4" /><path d="m10 10 4 4" /></svg>
 );
-
-// A text with the characters at those indexes marked, so a row shows why it matched. The indexes count UTF-16
-// code units, as fuzzysort reports them, and neighbouring ones share a node: a hit is one block behind the text it
-// matched, however far apart the hits of one match are, and a character spelled by two units, such as an emoji, stays in
-// one piece. A text with nothing marked is handed back whole.
-const marked = (text: string, marks?: ReadonlyArray<number>) => {
-  if (!marks?.length) return text;
-  const runs: [number, number][] = [];
-  for (const index of [...marks].sort((a, b) => a - b)) {
-    const last = runs[runs.length - 1];
-    if (last && last[1] === index) last[1] += 1;
-    else runs.push([index, index + 1]);
-  }
-  const parts: ReactNode[] = [];
-  let from = 0;
-  for (const [start, end] of runs) {
-    if (start > from) parts.push(text.slice(from, start));
-    parts.push(<b key={start}>{text.slice(start, end)}</b>);
-    from = end;
-  }
-  if (from < text.length) parts.push(text.slice(from));
-  return parts;
-};
-
-// The path a row prints, with the directory the search started at taken off.
-const shownPath = (directory: string, path: string) => path.startsWith(`${directory}/`) ? path.slice(directory.length + 1) : path;
 
 // The search picker: the rows it finds under its input, with the page following the row under the selection, so what a row
 // stands for is seen before Enter opens it.
@@ -618,40 +590,41 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
     }, 150);
     return () => clearTimeout(timer);
   }, [mode, needle, context, visited.machine, directory]);
-  const { rows, answered } = useMemo<{ rows: SearchRow[]; answered: boolean }>(() => {
+  const { rows, answered } = useMemo(() => {
+    const capped = (answered: boolean, drawn: SearchRow[]) => ({ answered, rows: drawn.slice(0, rowLimit) });
+    const shownPath = (path: string) => path.startsWith(`${directory}/`) ? path.slice(directory.length + 1) : path;
     if (mode === 'grep') {
-      return {
-        answered: matches !== undefined,
-        rows: (matches ?? []).map((hit) => ({
-          key: `${hit.path}:${hit.line}`, title: hit.text,
-          detail: `${shownPath(directory, hit.path)}:${hit.line}`,
-          target: visit(hit, visited.machine),
-        })).slice(0, rowLimit),
-      };
+      return capped(matches !== undefined, (matches ?? []).map((hit) => ({
+        key: `${hit.path}:${hit.line}`, title: hit.text,
+        detail: `${shownPath(hit.path)}:${hit.line}`,
+        target: visit(hit, visited.machine),
+      })));
     }
-    // The query is matched against the texts a row prints, in the order it prints them, so a marked character lands on the
-    // character it matched: the title, then the detail of the rows that have one.
-    const search = (candidates: SearchRow[]) => {
-      if (!needle) return candidates.slice(0, rowLimit);
-      const found = fuzzysort.go(needle, candidates, { keys: ['title', 'detail'], threshold: matchThreshold, limit: rowLimit });
-      return found.map((one) => ({ ...one.obj, marks: one[0].indexes, detailMarks: one[1]?.indexes }));
-    };
+    // Keep unmatched ancestors so filtering preserves the matching declaration's context.
     if (mode === 'symbols') {
-      return {
-        answered: symbols !== undefined,
-        rows: search((symbols ?? []).map((symbol) => ({
-          key: `${symbol.line}:${symbol.column}`, title: symbol.name, detail: symbol.container,
-          target: visit({ path: visited.path, line: symbol.line, column: symbol.column }, visited.machine),
-        }))),
-      };
+      const branch = (entries: FileSymbol[], depth: number): SearchRow[] => entries.flatMap((entry) => {
+        // `single` takes no threshold, so this name is asked through `go`, which is what applies `matchThreshold`.
+        const hit = needle ? fuzzysort.go(needle, [entry.name], { threshold: matchThreshold })[0] : undefined;
+        const below = branch(entry.children ?? [], depth + 1);
+        if (needle && hit === undefined && below.length === 0) return [];
+        return [{
+          key: `${entry.line}:${entry.column}`, title: entry.name, depth, marks: hit?.indexes,
+          target: visit({ path: visited.path, line: entry.line, column: entry.column }, visited.machine),
+        }, ...below];
+      });
+      return capped(symbols !== undefined, branch(symbols ?? [], 0));
     }
-    return {
-      answered: files !== undefined,
-      rows: search((files ?? []).map((path) => ({
-        key: path, title: shownPath(directory, path),
-        target: { type: 'file' as const, machine: visited.machine, path },
-      }))),
-    };
+    const candidates: SearchRow[] = (files ?? []).map((path) => ({
+      key: path, title: shownPath(path),
+      target: { type: 'file', machine: visited.machine, path },
+    }));
+    if (!needle) return capped(files !== undefined, candidates);
+    // Apply our row cap after restoring input order for equal scores.
+    const found = fuzzysort.go(needle, candidates, { key: 'title', threshold: matchThreshold, limit: 0 });
+    const positions = new Map(candidates.map((candidate, index) => [candidate, index]));
+    return capped(files !== undefined, [...found]
+      .sort((a, b) => b.score - a.score || positions.get(a.obj)! - positions.get(b.obj)!)
+      .map((one) => ({ ...one.obj, marks: one.indexes })));
   }, [mode, needle, directory, visited.machine, visited.path, files, matches, symbols]);
   const note = status?.mode === mode ? status.text : '';
   // The index of the row standing for the entry the tab is on, if the rows hold it.
@@ -667,6 +640,26 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
     const timer = setTimeout(() => peek(target), 120);
     return () => clearTimeout(timer);
   }, [chosen, at, rows]);
+  // fuzzysort reports UTF-16 offsets. Merge adjacent offsets so a surrogate pair stays in one highlight.
+  const marked = (text: string, marks?: ReadonlyArray<number>) => {
+    if (!marks?.length) return text;
+    const runs: [number, number][] = [];
+    for (const index of [...marks].sort((a, b) => a - b)) {
+      const last = runs[runs.length - 1];
+      if (last && last[1] === index) last[1] += 1;
+      else runs.push([index, index + 1]);
+    }
+    const parts: ReactNode[] = [];
+    let from = 0;
+    for (const [start, end] of runs) {
+      if (start > from) parts.push(text.slice(from, start));
+      parts.push(<b key={start}>{text.slice(start, end)}</b>);
+      from = end;
+    }
+    if (from < text.length) parts.push(text.slice(from));
+    return parts;
+  };
+
   return <div className="search-panel" role="dialog" aria-label="搜索">
     <div className="search-head">
       <Glass className="search-glass" />
@@ -682,9 +675,9 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
     </div>
     {note && <div className="search-note" role="status">{note}</div>}
     <div className="search-list" ref={list}>
-      {rows.map((row, index) => <button key={row.key} type="button" className="search-row" aria-current={index === at || undefined} onClick={() => navigate(row.target)} onMouseEnter={() => setChosen(index)}>
+      {rows.map((row, index) => <button key={row.key} type="button" className="search-row" aria-current={index === at || undefined} style={{ '--depth': row.depth ?? 0 } as CSSProperties} onClick={() => navigate(row.target)} onMouseEnter={() => setChosen(index)}>
         <span className="search-title">{marked(row.title, row.marks)}</span>
-        {row.detail && <span className="search-detail">{marked(row.detail, row.detailMarks)}</span>}
+        {row.detail && <span className="search-detail">{row.detail}</span>}
       </button>)}
       {answered && !rows.length && !note && <div className="file-message">{emptyMessage[mode]}</div>}
     </div>

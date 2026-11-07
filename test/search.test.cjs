@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 const { mkdirSync, writeFileSync } = require('node:fs');
 const { basename, join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { codeShowing, dismissSearch, editorFocused, fileSearchEmpty, landedOn, lists, openSearch, search, searchInput, searchMarks, searchPanel, searchRow, searchRows, shownPanel, shows, showWritten, submitSearch, waitForPath } = require('./editor-ui.cjs');
+const { codeShowing, dismissSearch, editorFocused, fileSearchEmpty, landedOn, lists, openSearch, queryApplied, search, searchInput, searchMarks, searchPanel, searchRow, searchRowEntries, searchRows, shownPanel, shows, showWritten, submitSearch, waitForPath } = require('./editor-ui.cjs');
+
+const rowLimit = 200;
 
 test('the search box finds files and text, and Enter opens what it found', { timeout: 120000 }, () => withWindow('wangcai-editor-search', lists, async ({ home, page, errors }) => {
   const main = join(home, 'main.ts');
@@ -97,13 +99,51 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   await searchInput(page).fill('nst');
   await fileSearchEmpty(page).waitFor();
   await dismissSearch(page);
+  assert.deepEqual(errors, []);
+}));
 
-  // A grep answer longer than the page draws is cut at the row limit: 25 files of 10 matching lines, and 200 rows drawn.
+test('rows that score the same keep the order the list came in', { timeout: 120000 }, () => withWindow('wangcai-editor-search-order', lists, async ({ home, page, errors }) => {
+  // Two files of one name in two directories of one name length: a query for that name scores them the same, so only the order
+  // the workspace's list of files comes in decides which prints first.
+  const dupQuery = 'dup';
+  const dupName = `${dupQuery}.ts`;
+  const oneDir = join(home, 'one');
+  const twoDir = join(home, 'two');
+  const onePath = join(oneDir, dupName);
+  const twoPath = join(twoDir, dupName);
+  mkdirSync(oneDir);
+  mkdirSync(twoDir);
+  writeFileSync(twoPath, '');
+  await showWritten(page, onePath, '');
+  await openSearch(page);
+  const dupRowTexts = async () => (await searchRowEntries(page)).map((row) => row.text).filter((text) => text.endsWith(dupName));
+  await until(async () => (await dupRowTexts()).length === 2);
+  const listOrder = await dupRowTexts();
+  await searchInput(page).fill(dupQuery);
+  await queryApplied(page);
+  assert.deepEqual(await dupRowTexts(), listOrder);
+  await dismissSearch(page);
+  assert.deepEqual(errors, []);
+}));
+
+test('a query matching more rows than the picker shows brings them all to the cap', { timeout: 180000 }, () => withWindow('wangcai-editor-search-cap', lists, async ({ home, page, errors }) => {
+  const manyDir = join(home, 'many');
+  mkdirSync(manyDir);
+  const capPrefix = 'cap-';
+  const names = Array.from({ length: rowLimit + 1 }, (_, index) => `${capPrefix}${String(index).padStart(3, '0')}.ts`);
+  for (const name of names) writeFileSync(join(manyDir, name), '');
+  await showWritten(page, join(manyDir, names[0]), '');
+  await search(page, capPrefix);
+  await queryApplied(page);
+  assert.equal(await searchRows(page).count(), rowLimit);
+  await dismissSearch(page);
   const hitPrefix = 'HIT_';
-  const hitsBody = (index) => Array.from({ length: 10 }, (_, line) => `${hitPrefix}${index}_${line}`).join('\n');
-  for (let index = 0; index < 25; index++) writeFileSync(join(home, `hits${index}.txt`), hitsBody(index));
+  const hitsPerFile = 10;
+  const hitFiles = Math.ceil((rowLimit + 1) / hitsPerFile);
+  const hitsBody = (index) => Array.from({ length: hitsPerFile }, (_, line) => `${hitPrefix}${index}_${line}`).join('\n');
+  for (let index = 0; index < hitFiles; index++) writeFileSync(join(home, `hits${index}.txt`), hitsBody(index));
   await search(page, `>${hitPrefix}`);
-  assert.equal(await searchRows(page).count(), 200);
+  assert.equal(await searchRows(page).count(), rowLimit);
   await dismissSearch(page);
   assert.deepEqual(errors, []);
 }));

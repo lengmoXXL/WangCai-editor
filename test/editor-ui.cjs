@@ -120,8 +120,7 @@ const showAfter = async (page, control, line) => {
   await control.click();
   await lineShown(page, line);
 };
-// A panel pointed at a file, waited for by a line the file holds — or, for a file with nothing in it, by the editor that
-// draws it.
+// A panel pointed at a file, waited for by a line the file holds — or, where the case reads no line, by the editor that draws it.
 const showFile = async (scope, path, text) => {
   await goToPath(scope, path);
   await (text === undefined ? codeContent(scope) : codeShowing(scope, text)).waitFor();
@@ -145,6 +144,19 @@ const selectionMarks = (scope) => codeSurface(scope).locator(`.${selectionClass}
 
 // Whether an editor in this window is holding the keyboard.
 const editorFocused = (page) => codeSurface(page).evaluateAll((scopes) => scopes.some((scope) => scope.contains(document.activeElement)));
+
+// The mark the header carries while the text has parted from the file it came from.
+const dirtyMark = (scope) => scope.locator('.editor-dirty');
+
+// Text typed into the page on show: the vim layer is in the normal mode, so the insert mode is entered first and left after,
+// and the mark above is what says the typing landed.
+const typeInto = async (page, text) => {
+  await until(() => editorFocused(page));
+  await page.keyboard.press('i');
+  await page.keyboard.type(text);
+  await page.keyboard.press('Escape');
+  await dirtyMark(shownPanel(page)).waitFor();
+};
 
 // The dot the language service behind the file is shown by, in the state it is asked about.
 const lspDot = (scope, state) => scope.locator(`.editor-lsp.${state}`);
@@ -209,10 +221,19 @@ const searchPanel = (scope) => scope.getByRole('dialog', { name: '搜索' });
 const searchInput = (scope) => searchPanel(scope).getByRole('textbox', { name: '搜索' });
 const searchRows = (scope) => searchPanel(scope).locator('.search-row');
 const searchRow = (scope, text) => searchRows(scope).filter({ hasText: text }).first();
+const searchRowNamed = (scope, name) => searchRows(scope).and(scope.getByRole('button', { name, exact: true }));
 const fileSearchEmpty = (scope) => searchPanel(scope).getByText('没有匹配的文件', { exact: true });
 
-// The runs of text the picker marked in the title of a row: neighbouring hits share a run, not one character each.
-const searchMarks = (row) => row.locator('.search-title b').allInnerTexts();
+// The visible parent is the nearest preceding row with a shallower depth.
+const searchRowEntries = (scope) => searchRows(scope).evaluateAll((rows) => {
+  const entries = rows.map((row) => ({ text: row.innerText, depth: Number(getComputedStyle(row).getPropertyValue('--depth')) }));
+  return entries.map((row, place) => ({ ...row, holder: entries.slice(0, place).findLast((above) => above.depth < row.depth)?.text }));
+});
+
+const titleRunSelector = '.search-title b';
+const searchMarks = (row) => row.locator(titleRunSelector).allInnerTexts();
+// File and symbol queries add marks; waiting for one avoids reading the previous query's unfiltered rows.
+const queryApplied = (scope) => until(() => searchRows(scope).evaluateAll((rows, selector) => rows.some((row) => row.querySelector(selector) !== null), titleRunSelector), { timeout: 60000 });
 
 // The picker opened from the panel's header, with nothing in it yet.
 const openSearch = async (scope) => {
@@ -312,6 +333,8 @@ module.exports = {
   selectionClass,
   selectionMarks,
   editorFocused,
+  dirtyMark,
+  typeInto,
   lspDot,
   lspDetail,
   noServerReason,
@@ -335,7 +358,10 @@ module.exports = {
   searchRows,
   searchRow,
   fileSearchEmpty,
+  searchRowEntries,
+  searchRowNamed,
   searchMarks,
+  queryApplied,
   openSearch,
   submitSearch,
   dismiss,

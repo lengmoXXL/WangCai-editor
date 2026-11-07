@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { chmodSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { alert, backButton, codeShowing, drawnLines, editorFocused, lists, refreshButton, showAfter, showFile, shownPanel, showWritten } = require('./editor-ui.cjs');
+const { alert, backButton, codeShowing, dirtyMark, drawnLines, lists, refreshButton, showAfter, showFile, shownPanel, showWritten, typeInto } = require('./editor-ui.cjs');
 
 // The key the plugin answers a write with itself, beside the `:w` that `writeWithEx` below types.
 const saveKey = 'Control+s';
@@ -18,22 +18,13 @@ const draftBody = `${draftLine}\n`;
 // The file as the page's first write leaves it: the typed line above the line it was opened with.
 const writtenBody = `${noteBody}${keptBody}`;
 
-// The mark the header carries while the text has parted from the file it came from.
-const dirtyMark = (scope) => scope.locator('.editor-dirty');
 // A write that landed: the file holds that text, and the header no longer marks the page.
 const wroteBack = async (page, file, text) => {
   await until(() => readFileSync(file, 'utf8') === text);
   await dirtyMark(shownPanel(page)).waitFor({ state: 'detached' });
 };
-// Text typed into the page on show: the vim layer is in the normal mode, so the insert mode is entered first, and the mark
-// appearing is what says the typing has landed.
-const typeInto = async (page, text) => {
-  await until(() => editorFocused(page));
-  await page.keyboard.press('i');
-  await page.keyboard.type(text);
-  await page.keyboard.press('Escape');
-  await dirtyMark(shownPanel(page)).waitFor();
-};
+
+// A write typed the way vim takes one, from the command line the page opens with `:`.
 const writeWithEx = async (page) => {
   await page.keyboard.press(':');
   const line = shownPanel(page).locator('.cm-vim-panel input');
