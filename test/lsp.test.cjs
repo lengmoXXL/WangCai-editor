@@ -23,10 +23,11 @@ const firstLine = `const first = ${answerToken};`;
 const referencesTitle = '引用';
 const implementationsTitle = '实现';
 
-// The keys the plugin answers itself, as the README lists them: the three jumps of the normal mode, the pair that walks
+// The keys the plugin answers itself, as the README lists them: the four jumps of the normal mode, the pair that walks
 // the tab's history, and the one that opens the search picker.
 const definitionKeys = ['g', 'd'];
 const implementationKeys = ['g', 'i'];
+const typeDefinitionKeys = ['g', 'D'];
 const referencesKeys = ['g', 'r'];
 const jumpBackKey = 'Control+o';
 const jumpForwardKey = 'Control+i';
@@ -229,6 +230,10 @@ test('the jump keys ask the server, walk back through where they were made, and 
   await landedOn(page, main, subjectLine);
   await page.keyboard.press(jumpForwardKey);
   await landedOn(page, shapes, classLine);
+  await page.keyboard.press(jumpBackKey);
+  await landedOn(page, main, subjectLine);
+  await pressOn(page, subjectLine, shapeToken, ...typeDefinitionKeys);
+  await landedOn(page, shapes, interfaceLine);
   await page.keyboard.press(jumpBackKey);
   await landedOn(page, main, subjectLine);
   // `gd` takes the same road for a definition, and `gr` lists what it found rather than moving the page.

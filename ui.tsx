@@ -46,10 +46,12 @@ const viewOf = (cm: unknown) => (cm as { cm6?: EditorView }).cm6;
 // A key the vim layer answers asks the view it was typed into; the tab's `<C-s>` asks the one the page on show holds.
 const pageKeys = new Map<EditorView, { jump: (act: LocationFeature) => void; save: () => void }>();
 
-// The keys the normal mode answers by our own actions: the key, and the question it asks the view.
+// The keys the normal mode answers by our own actions: the key, and the question it asks the view, in the order the menu
+// offers those questions.
 const vimCommands: [keys: string, act: LocationFeature][] = [
   ['gd', 'definition'],
   ['gi', 'implementation'],
+  ['gD', 'typeDefinition'],
   ['gr', 'references'],
 ];
 
