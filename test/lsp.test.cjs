@@ -23,8 +23,8 @@ const firstLine = `const first = ${answerToken};`;
 const referencesTitle = '引用';
 const implementationsTitle = '实现';
 
-// The keys the plugin answers itself, as the README lists them: the three jumps of the normal mode, the pair the tab keeps
-// for walking the jumps, and the one that opens the search picker.
+// The keys the plugin answers itself, as the README lists them: the three jumps of the normal mode, the pair that walks
+// the tab's history, and the one that opens the search picker.
 const definitionKeys = ['g', 'd'];
 const implementationKeys = ['g', 'i'];
 const referencesKeys = ['g', 'r'];
@@ -224,7 +224,7 @@ test('the jump keys ask the server, walk back through where they were made, and 
   const { main, shapes } = await openShapes(home, page);
   await pressOn(page, subjectLine, squareToken, ...implementationKeys);
   await landedOn(page, shapes, classLine);
-  // The list of jumps holds where the key started and where it landed, and the pair is walked both ways.
+  // The tab's history holds where the key started and where it landed, and the pair is walked both ways.
   await pressOn(page, classLine, squareToken, jumpBackKey);
   await landedOn(page, main, subjectLine);
   await page.keyboard.press(jumpForwardKey);

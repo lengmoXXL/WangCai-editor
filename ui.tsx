@@ -26,8 +26,6 @@ const histories = new Map<string, History>();
 // A jump's target as the visit that lands on it, on the machine the file it was answered for lives on.
 const visit = (target: Target, machine: FileClick['machine']): FileClick =>
   ({ type: 'file', machine, path: target.path, line: target.line, column: target.column });
-// The places a tab has jumped through, and where in them it stands.
-type Jumps = { entries: Target[]; index: number };
 
 // The text a file was edited into and not written back, by the file's identity: leaving the file keeps it, and the page
 // shows it again instead of what the file holds. Another tab may show the same file, so a tab closing says nothing about
@@ -232,7 +230,7 @@ function Overlay({ className, role, label, at, onClose, children }: {
 
 type Editing = { onDoc: (text: string) => void; save: () => void };
 
-function EditorPage({ file, text, remember, peeking, navigate, jumps, editing }: { file: HistoryEntry; text: string; remember: Remember; peeking: boolean; navigate: (file: FileClick) => void; jumps: Jumps; editing: Editing }) {
+function EditorPage({ file, text, remember, peeking, navigate, editing }: { file: HistoryEntry; text: string; remember: Remember; peeking: boolean; navigate: (file: FileClick) => void; editing: Editing }) {
   const element = useRef<HTMLDivElement>(null);
   const control = useRef<EditorView>(undefined);
   // The view reaches back through this, so the one built once keeps calling the current render's callbacks.
@@ -258,18 +256,13 @@ function EditorPage({ file, text, remember, peeking, navigate, jumps, editing }:
     setSession(running.session(options));
     return running.subscribe(() => setSession(running.session(options)));
   }, [options]);
-  // A jump from the caret: it lands where it is asked to, and leaves the place it started from and the one it landed on in
-  // the tab's list. A jump made after going back starts that list over, and it never stops twice in one place.
+  // A jump from the caret is two visits of the tab's history: the place it leaves, taken at the caret so going back
+  // returns to it, and the place it lands on.
   const jumpFrom = (target: Target) => {
     const view = control.current;
     if (!view) return;
     const at = positionOf(view);
-    jumps.entries.length = jumps.index + 1;
-    for (const entry of [{ path: file.path, line: at.line, column: at.column }, target]) {
-      const last = jumps.entries[jumps.entries.length - 1];
-      if (!last || last.path !== entry.path || last.line !== entry.line || last.column !== entry.column) jumps.entries.push(entry);
-    }
-    jumps.index = jumps.entries.length - 1;
+    navigate({ type: 'file', machine: file.machine, path: file.path, line: at.line, column: at.column });
     navigate(visit(target, file.machine));
   };
   // One of the questions the menu and the keys ask about a place in this file. References are always a list to pick from,
@@ -432,7 +425,7 @@ function Shell({ children }: { children: ReactNode }) {
   return <section className="editor" aria-label="编辑器">{children}</section>;
 }
 
-function FileView({ context, file, navigate, back, forward, openSearch, holder, remember, peeking, jumps }: PageProps & { holder: string; remember: Remember; peeking: boolean; jumps: Jumps }) {
+function FileView({ context, file, navigate, back, forward, openSearch, holder, remember, peeking }: PageProps & { holder: string; remember: Remember; peeking: boolean }) {
   // The text the next view is built with, which only a read sets; `baseline`, what the file itself holds; and `pageText`, the
   // text the view holds now, which is what a write puts in the file.
   const [text, setText] = useState<string>();
@@ -506,7 +499,7 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
     <Navigation context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} dirty={dirty} refresh={refresh} writeError={writeError} />
     {readError ? <div className="file-message" role="alert">{readError}</div>
       : text === undefined ? <div className="file-message">正在读取…</div>
-      : <EditorPage file={file} text={text} remember={remember} peeking={peeking} navigate={navigate} jumps={jumps} editing={editing} />}
+      : <EditorPage file={file} text={text} remember={remember} peeking={peeking} navigate={navigate} editing={editing} />}
   </Shell>;
 }
 
@@ -702,7 +695,7 @@ function EmptyPage({ context, base, navigate, loading, workspaceError }: { conte
 // The page a tab draws: the file on show with the search picker over it, or the empty page while no file has been sent
 // here.
 // `file` is what the page shows, which a picker's selection may stand in for, and `visited` the entry the tab is on.
-function Body({ context, navigate, back, forward, openSearch, workspaceId, file, visited, searching, remember, closeSearch, peek, jumps }: Omit<PageProps, 'file'> & { workspaceId?: string; file?: HistoryEntry; visited?: HistoryEntry; searching: boolean; remember: Remember; closeSearch: () => void; peek: (file: FileClick) => void; jumps: Jumps }) {
+function Body({ context, navigate, back, forward, openSearch, workspaceId, file, visited, searching, remember, closeSearch, peek }: Omit<PageProps, 'file'> & { workspaceId?: string; file?: HistoryEntry; visited?: HistoryEntry; searching: boolean; remember: Remember; closeSearch: () => void; peek: (file: FileClick) => void }) {
   const [loading, setLoading] = useState(false);
   const [workspaceError, setWorkspaceError] = useState('');
   // The directory of the workspace in front: what a path typed before any file is opened is resolved against, and the
@@ -728,7 +721,7 @@ function Body({ context, navigate, back, forward, openSearch, workspaceId, file,
   // Only a different file rebuilds the page.
   const key = fileKey(file);
   return <div className={searching ? 'editor-body searching' : 'editor-body'}>
-    <FileView key={key} context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} holder={workspaceId ?? ''} remember={remember} peeking={searching} jumps={jumps} />
+    <FileView key={key} context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} holder={workspaceId ?? ''} remember={remember} peeking={searching} />
     {visited && searching && <Search context={context} visited={visited} workspace={workspace} peek={peek} navigate={navigate} close={closeSearch} />}
   </div>;
 }
@@ -744,8 +737,6 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
   // What the tab shows on top of the page the history points at: the search picker, and the file its selection stands
   // for, which is shown without being visited.
   const view: { searching: boolean; peeked?: FileClick } = { searching: false };
-  // Kept on the tab so it outlives the page each jump lands on.
-  const jumps: Jumps = { entries: [], index: -1 };
   // The entry the tab shows: what the picker is peeking at, or else the one its history points at.
   const showing = () => view.peeked ?? history.entries[history.index];
   const push = (file: FileClick) => {
@@ -792,6 +783,7 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       void context.ui.request('save-history', Object.fromEntries(histories));
       show();
     };
+    const canStep = (by: number) => history.entries[history.index + by] !== undefined;
     // The entry is the one the view shows rather than whatever the history points at now.
     const remember = (entry: HistoryEntry, at: Partial<Position>) => {
       Object.assign(entry, at);
@@ -799,7 +791,7 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       if (entry.top === 0) delete entry.top;
     };
     // The keys this plugin answers itself: `<C-s>` writes the file on show back to its disk, `<C-f>` opens the search picker
-    // and `<C-o>`/`<C-i>` walk the tab's list of jumps. The vim layer answers `<C-o>`, `<C-i>` and `<C-f>` itself, so those
+    // and `<C-o>`/`<C-i>` walk the tab's history. The vim layer answers `<C-o>`, `<C-i>` and `<C-f>` itself, so those
     // are taken before it on the capture, and every one of them is taken by the tab rather than by a page: a page is built
     // after a key may already be on its way.
     const onKeyDown = (event: KeyboardEvent) => {
@@ -815,26 +807,22 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
         if (view) pageKeys.get(view)?.save();
         return;
       }
-      // The rest need a tab that shows something: a picker without one has nothing to list, and a jump asks the machine of
-      // the entry it leaves.
-      const shown = showing();
-      if (!shown) return;
+      // The rest need a tab that shows something: a picker without one has nothing to list.
+      if (!showing()) return;
       if (pressed === 'f') { event.preventDefault(); event.stopPropagation(); openSearch(); return; }
       if (pressed !== 'o' && pressed !== 'i') return;
-      const forward = pressed === 'i';
-      const target = jumps.entries[jumps.index + (forward ? 1 : -1)];
-      if (!target) return;
+      const by = pressed === 'i' ? 1 : -1;
+      if (!canStep(by)) return;
       event.preventDefault();
       event.stopPropagation();
-      jumps.index += forward ? 1 : -1;
-      navigate(visit(target, shown.machine));
+      step(by);
     };
     addEventListener('keydown', onKeyDown, true);
     const render = () => mounted.render(<Body
       context={context}
       navigate={navigate}
-      back={history.index > 0 ? () => step(-1) : undefined}
-      forward={history.index < history.entries.length - 1 ? () => step(1) : undefined}
+      back={canStep(-1) ? () => step(-1) : undefined}
+      forward={canStep(1) ? () => step(1) : undefined}
       openSearch={openSearch}
       workspaceId={workspaceId}
       file={showing()}
@@ -843,7 +831,7 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       remember={remember}
       closeSearch={closeSearch}
       peek={peek}
-      jumps={jumps} />);
+      />);
     return { onSelect: render, dispose: () => { mounted.unmount(); removeEventListener('keydown', onKeyDown, true); } };
   } });
 }
