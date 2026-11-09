@@ -218,9 +218,9 @@ export function activate(context: MainContext) {
 
   // A pattern's matches under a workspace, one row per line that holds it. rg is asked for JSON because a match then
   // carries the byte offsets of its hits.
-  handlers.push(context.ui.handle('grep', ({ machine, path, query }: { machine: FileClick['machine']; path: string; query: string }) =>
+  handlers.push(context.ui.handle('grep', ({ machine, path, query, args }: { machine: FileClick['machine']; path: string; query: string; args?: string[] }) =>
     withConnection(machine, async (connection) => {
-      const found = await rg(connection, machine, path, ['--json', '--smart-case', '--max-count', '10', '--max-filesize', '2M', '-e', query]);
+      const found = await rg(connection, machine, path, ['--json', '--smart-case', '--max-count', '10', '--max-filesize', '2M', '-e', query, ...(args ?? [])]);
       // A pattern that matched nothing is exit code 1, which is an empty list rather than a failure.
       if (found.code > 1) throw new Error(Buffer.from(found.stderr).toString('utf8').trim() || '搜索失败');
       const hits: SearchHit[] = [];

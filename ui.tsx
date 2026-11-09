@@ -540,9 +540,9 @@ const emptyMessage: Record<SearchMode, string> = {
 
 type SearchRow = { key: string; title: string; detail?: string; depth?: number; target: FileClick; marks?: ReadonlyArray<number> };
 
-// A file search's query as rg reads it: the name ahead of `--` ranks the rows, and the flags after it are handed to
-// `--files` as they are. A query without `--` is only a name.
-const fileQuery = (query: string) => {
+// A search's query as rg reads it: the pattern ahead of `--` is what the rows are found by, and the flags after it are
+// handed to the rg run as they are. A query without `--` is only a pattern.
+const rgQuery = (query: string) => {
   const split = /^(?:(.*?)\s)?--(?:\s(.*))?$/.exec(query.trim());
   if (!split) return { flags: [], needle: query.trim() };
   const flags = (split[2] ?? '').split(/\s+/).filter(Boolean).map((word) => word.replace(/^(['"])(.*)\1$/, '$2'));
@@ -575,19 +575,23 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
   // Where a search starts: the workspace, or else the directory this visit points into.
   const directory = workspace || directoryOf(visited);
   const mode: SearchMode = query.startsWith('>') ? 'grep' : query.startsWith('@') ? 'symbols' : 'files';
-  const { flags, needle } = mode === 'files' ? fileQuery(query) : { flags: [], needle: query.slice(1).trim() };
+  const { flags, needle } = mode === 'symbols'
+    ? { flags: [], needle: query.slice(1).trim() }
+    : rgQuery(mode === 'files' ? query : query.slice(1));
+  // A listing takes the flags of a file search only: what a content search was handed belongs to the grep run.
+  const listingFlags = mode === 'files' ? flags : [];
   // What this picker asks a server about, which changes with the machine and path `serviceFor` reads.
   const options = useMemo(() => serviceFor(visited), [visited.machine, visited.path]);
   useEffect(() => {
     let alive = true;
     // The flags are rg's own, so a set of them is asked for once it settles rather than a keystroke at a time.
     const timer = setTimeout(() => {
-      void context.ui.request<string[]>('find-files', { machine: visited.machine, path: directory, args: flags })
+      void context.ui.request<string[]>('find-files', { machine: visited.machine, path: directory, args: listingFlags })
         .then((listed) => { if (alive) { setFiles(listed); clearStatus('files'); } })
         .catch((problem: Error) => { if (alive) { setFiles([]); setStatus({ mode: 'files', text: problem.message }); } });
     }, 150);
     return () => { alive = false; clearTimeout(timer); };
-  }, [context, visited.machine, directory, flags.join(' ')]);
+  }, [context, visited.machine, directory, listingFlags.join(' ')]);
   // The symbols of the file the tab is on, which is the file a symbol row jumps into.
   useEffect(() => {
     if (mode !== 'symbols') return;
@@ -608,7 +612,7 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
     setStatus({ mode: 'grep', text: '正在搜索…' });
     // rg is asked once typing pauses: a key pressed mid-word would otherwise start a search for a pattern already gone.
     const timer = setTimeout(() => {
-      void context.ui.request<SearchHit[]>('grep', { machine: visited.machine, path: directory, query: needle })
+      void context.ui.request<SearchHit[]>('grep', { machine: visited.machine, path: directory, query: needle, args: flags })
         .then((found) => {
           if (id !== asked.current) return;
           setMatches(found);
@@ -617,7 +621,7 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
         .catch((problem: Error) => { if (id !== asked.current) return; setMatches([]); setStatus({ mode: 'grep', text: problem.message }); });
     }, 150);
     return () => clearTimeout(timer);
-  }, [mode, needle, context, visited.machine, directory]);
+  }, [mode, needle, context, visited.machine, directory, flags.join(' ')]);
   const { rows, answered } = useMemo(() => {
     const capped = (answered: boolean, drawn: SearchRow[]) => ({ answered, rows: drawn.slice(0, rowLimit) });
     const shownPath = (path: string) => path.startsWith(`${directory}/`) ? path.slice(directory.length + 1) : path;

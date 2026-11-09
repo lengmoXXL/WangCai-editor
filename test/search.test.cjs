@@ -195,3 +195,27 @@ test('the flags after the separator are handed to rg', { timeout: 120000 }, () =
   await dismissSearch(page);
   assert.deepEqual(errors, []);
 }));
+
+test('the flags after the separator narrow what a content search greps', { timeout: 120000 }, () => withWindow('wangcai-editor-search-grep-flags', lists, async ({ home, page, errors }) => {
+  const token = 'GREP_FLAGGED';
+  const hitLine = `const ${token} = 1;`;
+  const one = join(home, 'one.ts');
+  const two = join(home, 'two.md');
+  writeFileSync(two, `${hitLine}\n`);
+  await showWritten(page, one, `${hitLine}\n`, hitLine);
+  // A pattern without flags finds the line in both files.
+  await search(page, `>${token}`);
+  await searchRow(page, `${basename(one)}:1`).waitFor();
+  await searchRow(page, `${basename(two)}:1`).waitFor();
+  await dismissSearch(page);
+  // A type picks the files rg reads, and a glob does too.
+  await search(page, `>${token} -- -t ts`);
+  await searchRow(page, `${basename(one)}:1`).waitFor();
+  assert.equal(await searchRow(page, `${basename(two)}:1`).count(), 0);
+  await dismissSearch(page);
+  await search(page, `>${token} -- -g *.md`);
+  await searchRow(page, `${basename(two)}:1`).waitFor();
+  assert.equal(await searchRow(page, `${basename(one)}:1`).count(), 0);
+  await dismissSearch(page);
+  assert.deepEqual(errors, []);
+}));
