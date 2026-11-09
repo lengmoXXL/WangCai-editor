@@ -535,6 +535,15 @@ const emptyMessage: Record<SearchMode, string> = {
 
 type SearchRow = { key: string; title: string; detail?: string; depth?: number; target: FileClick; marks?: ReadonlyArray<number> };
 
+// A file search's query as rg reads it: the name ahead of `--` ranks the rows, and the flags after it are handed to
+// `--files` as they are. A query without `--` is only a name.
+const fileQuery = (query: string) => {
+  const split = /^(?:(.*?)\s)?--(?:\s(.*))?$/.exec(query.trim());
+  if (!split) return { flags: [], needle: query.trim() };
+  const flags = (split[2] ?? '').split(/\s+/).filter(Boolean).map((word) => word.replace(/^(['"])(.*)\1$/, '$2'));
+  return { flags, needle: (split[1] ?? '').trim() };
+};
+
 // The magnifier, drawn on the header's button and in the picker's row: one glyph, whose size and colour come from where it
 // is drawn.
 const Glass = ({ className }: { className?: string }) => (
@@ -561,16 +570,19 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
   // Where a search starts: the workspace, or else the directory this visit points into.
   const directory = workspace || directoryOf(visited);
   const mode: SearchMode = query.startsWith('>') ? 'grep' : query.startsWith('@') ? 'symbols' : 'files';
-  const needle = (mode === 'files' ? query : query.slice(1)).trim();
+  const { flags, needle } = mode === 'files' ? fileQuery(query) : { flags: [], needle: query.slice(1).trim() };
   // What this picker asks a server about, which changes with the machine and path `serviceFor` reads.
   const options = useMemo(() => serviceFor(visited), [visited.machine, visited.path]);
   useEffect(() => {
     let alive = true;
-    void context.ui.request<string[]>('find-files', { machine: visited.machine, path: directory })
-      .then((listed) => { if (alive) { setFiles(listed); clearStatus('files'); } })
-      .catch((problem: Error) => { if (alive) { setFiles([]); setStatus({ mode: 'files', text: problem.message }); } });
-    return () => { alive = false; };
-  }, [context, visited.machine, directory]);
+    // The flags are rg's own, so a set of them is asked for once it settles rather than a keystroke at a time.
+    const timer = setTimeout(() => {
+      void context.ui.request<string[]>('find-files', { machine: visited.machine, path: directory, args: flags })
+        .then((listed) => { if (alive) { setFiles(listed); clearStatus('files'); } })
+        .catch((problem: Error) => { if (alive) { setFiles([]); setStatus({ mode: 'files', text: problem.message }); } });
+    }, 150);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [context, visited.machine, directory, flags.join(' ')]);
   // The symbols of the file the tab is on, which is the file a symbol row jumps into.
   useEffect(() => {
     if (mode !== 'symbols') return;
@@ -676,7 +688,7 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
   return <div className="search-panel" role="dialog" aria-label="搜索">
     <div className="search-head">
       <Glass className="search-glass" />
-      <input className="search-input" aria-label="搜索" autoFocus value={query} spellCheck={false} placeholder="搜索文件，> 搜内容，@ 列符号"
+      <input className="search-input" aria-label="搜索" autoFocus value={query} spellCheck={false} placeholder="搜索文件，-- 后传 rg 参数，> 搜内容，@ 列符号"
         onChange={(event) => { setQuery(event.target.value); setChosen(0); }}
         onKeyDown={(event) => {
           if (event.key === 'Escape') { event.preventDefault(); close(); }

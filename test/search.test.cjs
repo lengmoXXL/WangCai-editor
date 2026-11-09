@@ -171,3 +171,27 @@ test('a file the list does not hold leaves nothing under the selection', { timeo
   await dismissSearch(page);
   assert.deepEqual(errors, []);
 }));
+
+test('the flags after the separator are handed to rg', { timeout: 120000 }, () => withWindow('wangcai-editor-search-flags', lists, async ({ home, page, errors }) => {
+  const keptLine = 'export const kept = 1;';
+  const kept = join(home, 'kept.ts');
+  writeFileSync(join(home, 'dropped.md'), '# dropped\n');
+  await showWritten(page, kept, `${keptLine}\n`, keptLine);
+  // A query of flags alone lists what they name: only the TypeScript file, with the row of the file on show still under the
+  // selection.
+  await search(page, '-- -g *.ts');
+  const keptRow = searchRow(page, 'kept.ts');
+  await keptRow.waitFor();
+  assert.equal(await searchRow(page, 'dropped.md').count(), 0);
+  assert.equal(await keptRow.getAttribute('aria-current'), 'true');
+  // A name ahead of the separator is what the rows are ranked by, so a name the glob left out has no row of its own.
+  await searchInput(page).fill('dropped -- -g *.ts');
+  await fileSearchEmpty(page).waitFor();
+  // The same name with the glob that holds it.
+  await searchInput(page).fill('dropped -- -g *.md');
+  const droppedRow = searchRow(page, 'dropped.md');
+  await droppedRow.waitFor();
+  assert.equal(await searchRow(page, 'kept.ts').count(), 0);
+  await dismissSearch(page);
+  assert.deepEqual(errors, []);
+}));

@@ -206,10 +206,11 @@ export function activate(context: MainContext) {
   handlers.push(context.ui.handle('write', ({ machine, path, text }: { machine: FileClick['machine']; path: string; text: string }) =>
     withConnection(machine, (connection) => connection.fs.writeFile(path, Buffer.from(text, 'utf8')))));
 
-  // The paths a file search offers: what rg lists under a workspace, which leaves out what git ignores.
-  handlers.push(context.ui.handle('find-files', ({ machine, path }: { machine: FileClick['machine']; path: string }) =>
+  // The paths a file search offers: what rg lists under a workspace, which leaves out what git ignores, with the flags the
+  // page hands it.
+  handlers.push(context.ui.handle('find-files', ({ machine, path, args }: { machine: FileClick['machine']; path: string; args?: string[] }) =>
     withConnection(machine, async (connection) => {
-      const listed = await rg(connection, machine, path, ['--files', '--color', 'never']);
+      const listed = await rg(connection, machine, path, ['--files', '--color', 'never', ...(args ?? [])]);
       if (listed.code !== 0) throw new Error(Buffer.from(listed.stderr).toString('utf8').trim() || '文件列表读取失败');
       const files = Buffer.from(listed.stdout).toString('utf8').split('\n').filter(Boolean);
       return files.slice(0, pathCeiling).map((file) => posix.resolve(path, file));
