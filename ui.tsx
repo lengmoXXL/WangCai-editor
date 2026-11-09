@@ -331,16 +331,20 @@ function EditorPage({ file, text, remember, peeking, navigate, editing }: { file
     const view = control.current;
     if (view) view.dispatch({ effects: server.reconfigure(link) });
   }, [server, link]);
-  // Where the view sits: the offset the file was left at, or else the line the entry was opened at. A view that was built
-  // again starts at its own top, so the offset is taken for it once more; a panel that has given it no height yet places
-  // it on a later frame. That offset is read once per view, so what this runs for is a view being built and a jump that
-  // names another place.
+  // Where the view sits: the caret goes on the line the entry names, and the scroll is put back at the offset the file
+  // was left at, or else centred on that line. A view that was built again starts at its own top with the caret at the
+  // first line, so both are taken for it once more; a panel that has given it no height yet places it on a later frame.
+  // The offset is read once per view, so what this runs for is a view being built and a jump that names another place.
   const placement = useRef<{ view: EditorView; offset?: number }>(undefined);
   useEffect(() => {
     const view = control.current;
     if (!view) return;
     if (placement.current?.view !== view) placement.current = { view, offset: file.top };
     const placing = placement.current;
+    // A line past the end of the text and a column past the end of its line both come back to the last one there is.
+    const row = file.line === undefined ? undefined : view.state.doc.line(Math.min(file.line, view.state.doc.lines));
+    const at = row && Math.min(row.from + (file.column ?? 1) - 1, row.to);
+    if (at !== undefined) view.dispatch({ selection: { anchor: at } });
     let frames = 0;
     const place = () => {
       if (!view.dom.clientHeight) return false;
@@ -352,11 +356,8 @@ function EditorPage({ file, text, remember, peeking, navigate, editing }: { file
         placing.offset = undefined;
         return true;
       }
-      if (file.line === undefined) return true;
-      // A line past the end of the text and a column past the end of its line both come back to the last one there is.
-      const row = view.state.doc.line(Math.min(file.line, view.state.doc.lines));
-      const at = Math.min(row.from + (file.column ?? 1) - 1, row.to);
-      view.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: 'center' }) });
+      if (at === undefined) return true;
+      view.dispatch({ effects: EditorView.scrollIntoView(at, { y: 'center' }) });
       return true;
     };
     if (place()) return;

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { mkdirSync, statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { activeLineBox, alert, backButton, clickFile, collectErrors, createWorkspace, drawnCloseButtons, drawnLines, editorPanels, editorPlugin, editorTab, editorView, filesColumn, filesPlugin, forwardButton, goToPath, landedOn, lineBoxes, lineShown, lists, machine, openDirectoryButton, openEditorWorkspace, openWorkspaces, refreshButton, selectionClass, selectionMarks, showAfter, showFile, shownPanel, shows, showWritten, storedHistory, viewMenu, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
+const { activeLineBox, alert, backButton, clickFile, collectErrors, createWorkspace, cursorAt, drawnCloseButtons, drawnLines, editorPanels, editorPlugin, editorTab, editorView, filesColumn, filesPlugin, forwardButton, goToPath, landedOn, lineBoxes, lineShown, lists, machine, openDirectoryButton, openEditorWorkspace, openWorkspaces, refreshButton, selectionClass, selectionMarks, showAfter, showFile, shownPanel, shows, showWritten, storedHistory, viewMenu, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
 
 // An opening line for the pages of the cases that do not turn on which line comes first.
 const firstLine = 'const first = 1;';
@@ -158,6 +158,11 @@ test('a file is shown again where it was left', { timeout: 120000 }, () => withW
   await waitForPath(shownPanel(page), long);
   // The editor comes back where it was left rather than at its top: what it draws is far into the file.
   await until(async () => (await drawnLines(page)).some((line) => line === longLine(lastLine)));
+  // The caret comes back with it rather than staying at the first line: `G` left it on the empty line the file ends
+  // with, so `k` steps onto the last line of text, and the view stays down there instead of jumping to the top.
+  await page.keyboard.press('k');
+  await until(() => cursorAt(page, longLine(lastLine)));
+  assert.ok(!(await drawnLines(page)).includes(longLine(1)));
   assert.deepEqual(errors, []);
 }));
 
