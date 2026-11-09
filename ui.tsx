@@ -640,8 +640,10 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
   const note = status?.mode === mode ? status.text : '';
   // The index of the row standing for the entry the tab is on, if the rows hold it.
   const entryRow = rows.findIndex((row) => row.target.path === visited.path && (row.target.line === undefined || row.target.line === visited.line));
-  // Rows arrive after the keystroke that asked for them, so the chosen one is kept within what is on show.
-  const at = Math.min(chosen ?? Math.max(entryRow, 0), Math.max(rows.length - 1, 0));
+  // Rows arrive after the keystroke that asked for them, so the chosen one is kept within what is on show. An entry the
+  // rows do not hold, past the cap the unfiltered list is drawn with, leaves nothing under the selection: Enter then
+  // opens no file the reader never picked.
+  const at = Math.min(chosen ?? entryRow, rows.length - 1);
   useEffect(() => { list.current?.querySelector('[aria-current]')?.scrollIntoView({ block: 'nearest' }); }, [at, rows]);
   // A name typed a letter at a time would otherwise read a file per letter, so the row under the selection is taken
   // once the selection rests.

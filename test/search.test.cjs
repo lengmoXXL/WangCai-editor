@@ -147,3 +147,27 @@ test('a query matching more rows than the picker shows brings them all to the ca
   await dismissSearch(page);
   assert.deepEqual(errors, []);
 }));
+
+test('a file the list does not hold leaves nothing under the selection', { timeout: 120000 }, () => withWindow('wangcai-editor-search-absent', lists, async ({ home, page, errors }) => {
+  // The picker lists the workspace's paths, and a path it leaves out is where a file past the cap stands too: the entry the
+  // tab is on has no row of its own, so nothing is under the selection, and Enter opens no file the reader never picked.
+  writeFileSync(join(home, 'listed.ts'), 'export const listed = 1;\n');
+  // A hidden path is not in the list, and the page opens it like any other file.
+  const hidden = join(home, '.hidden.ts');
+  const hiddenLine = 'export const hidden = 1;';
+  await showWritten(page, hidden, `${hiddenLine}\n`, hiddenLine);
+  await openSearch(page);
+  const firstRow = searchRows(page).first();
+  await firstRow.waitFor();
+  assert.equal(await searchPanel(page).locator('[aria-current]').count(), 0);
+  // Enter with nothing under the selection opens nothing: the picker stays, and the page stays on the file it shows.
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(400);
+  assert.equal(await searchPanel(page).count(), 1);
+  assert.ok(await shows(shownPanel(page), hidden));
+  // A key that asks for a row still takes the first of them.
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await firstRow.getAttribute('aria-current'), 'true');
+  await dismissSearch(page);
+  assert.deepEqual(errors, []);
+}));
