@@ -70,6 +70,9 @@ export function activate(context: MainContext) {
       }
       const found = await probe;
       if (found) return { ...found, args };
+      // A program that is not there may be installed while the window runs, so a miss is not kept: the next attempt
+      // looks again.
+      probes.delete(key);
     }
     return undefined;
   };
