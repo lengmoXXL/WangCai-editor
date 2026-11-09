@@ -168,4 +168,7 @@ const symbolsServer = (symbols) => serverFor('typescript', ['node', join(__dirna
 const treeServer = symbolsServer(treeSymbols);
 const flatServer = symbolsServer(flatSymbols);
 
-module.exports = { openTs, openRust, pids, languageServers, unexpected, serverFor, countingServer, starts, treeNames, areaNameAt, flatNames, treeBody, flatBody, treeServer, flatServer };
+const serverSaid = 'Indexing done';
+const messageServer = serverFor('typescript', ['node', join(__dirname, 'message-server.cjs'), serverSaid]);
+
+module.exports = { openTs, openRust, pids, languageServers, unexpected, serverFor, countingServer, starts, treeNames, areaNameAt, flatNames, treeBody, flatBody, treeServer, flatServer, serverSaid, messageServer };

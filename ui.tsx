@@ -124,11 +124,16 @@ const stateLabels: Record<ServiceStatus['state'], string> = { connecting: '正�
 
 // The dot in the header for this file's language service: hovering names the service and how it is doing, and clicking it
 // starts the server behind the file, or starts it again when one was running.
-function LspStatus({ file }: { file: HistoryEntry }) {
-  const [, rerender] = useReducer((count: number) => count + 1, 0);
+function LspStatus({ file, report }: { file: HistoryEntry; report: (text: string) => void }) {
+  const [changes, rerender] = useReducer((count: number) => count + 1, 0);
   const [hover, setHover] = useState(false);
   useEffect(() => services?.subscribe(rerender), []);
   const options = serviceFor(file);
+  // A server line arrives with a change of the session, which is what `changes` counts.
+  useEffect(() => {
+    const message = options && services?.takeMessage(options);
+    if (message) report(message.text);
+  }, [changes]);
   const status = options && services?.status(options);
   if (!options || !status) return null;
   return <div className="editor-lsp-wrap" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
@@ -179,7 +184,7 @@ function Navigation({ context, file, navigate, back, forward, openSearch, dirty,
     <Address context={context} base={file} navigate={navigate} report={report} />
     {dirty && <span className="editor-dirty" role="status" aria-label="有未写回的改动" title="有未写回的改动">*</span>}
     <div className="editor-tail">
-      <LspStatus file={file} />
+      <LspStatus file={file} report={report} />
       <button className="editor-icon" aria-label="打开所在目录" title="在 files 里打开当前文件所在的目录"
         onClick={() => navigate({ type: 'directory', machine: file.machine, path: directoryOf(file) })}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 2H14V12H2V4.5Z" /></svg>

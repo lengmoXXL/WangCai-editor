@@ -4,7 +4,7 @@ const { writeFileSync } = require('node:fs');
 const { basename, join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { alert, backButton, closeWorkspace, codeShowing, codeSurface, cursorAt, diagnostics, dismiss, dismissSearch, editorFocused, hoverTips, landed, landedOn, lineBoxes, lists, lspDetail, lspDot, noServerReason, placeFileName, placeList, placeRows, placeText, queryApplied, search, searchInput, searchMarks, searchPanel, searchRowEntries, searchRowNamed, showFile, shownPanel, showWritten, storedHistory, submitSearch, typeInto, workspaceTabs } = require('./editor-ui.cjs');
-const { areaNameAt, flatBody, flatNames, flatServer, languageServers, openRust, openTs, serverFor, treeBody, treeNames, treeServer } = require('./lsp-fixtures.cjs');
+const { areaNameAt, flatBody, flatNames, flatServer, languageServers, openRust, openTs, serverFor, treeBody, treeNames, treeServer, messageServer, serverSaid } = require('./lsp-fixtures.cjs');
 
 // The name the shapes file a case writes is imported by, so that the specifier and the path agree.
 const shapesName = 'shapes';
@@ -102,6 +102,19 @@ test('a code file hovers and underlines from a language server, which the dot re
   // Closing the workspace takes the server with it: no file of this window is left to need it.
   await closeWorkspace(workspaceTabs(page).first());
   await until(() => !languageServers(home).length);
+  assert.deepEqual(errors, []);
+}));
+
+test('a server message goes over the page as a notice, which leaves by itself', { timeout: 90000 }, () => withWindow('wangcai-editor-message', messageServer, async ({ home, page, errors }) => {
+  const saidLine = 'export const said = 1;';
+  const main = join(home, 'main.ts');
+  await showWritten(page, main, `${saidLine}\n`, saidLine);
+  // The server's own line is said over the page, and not kept in the client's dialog, which waits to be closed.
+  const said = alert(page).filter({ hasText: serverSaid });
+  await said.waitFor({ timeout: 60000 });
+  assert.equal(await page.locator('.cm-lsp-message').count(), 0);
+  // Nothing keeps it up: it goes by itself.
+  await said.waitFor({ state: 'detached', timeout: 15000 });
   assert.deepEqual(errors, []);
 }));
 

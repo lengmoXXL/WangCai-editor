@@ -84,6 +84,8 @@ class Session {
   error?: string;
   upSince?: number;
   retired = false;
+  // The last line the server said over the editor, and whether the page has shown it yet.
+  message?: { text: string; shown: boolean };
   private handlers = new Set<(message: string) => void>();
   private frames = new Frames();
 
@@ -97,10 +99,19 @@ class Session {
       rootUri: uriOf(info.root),
       timeout: 10_000,
       extensions: [serverDiagnostics(), hoverTooltips()],
+      // What a server says about itself is the page's notice, which leaves by itself, rather than the client's dialog,
+      // which stays up until it is closed.
+      notificationHandlers: { 'window/showMessage': (_client, params) => { this.said(String(params?.message ?? '')); return true; } },
     }).connect(transport);
     // The handshake is only what the client says about itself: a server that never answers it is still one this window can
     // write to, so what it says is kept for the tooltip and the session stays up.
     void this.client.initializing.then(() => this.up(), (problem: Error) => { this.error = problem.message; });
+  }
+
+  private said(text: string) {
+    if (!text) return;
+    this.message = { text, shown: false };
+    this.changed();
   }
 
   private up() {
@@ -392,6 +403,15 @@ export class LanguageServices {
     if (missing) return { server: missing.language, state: 'missing', error: missing.error };
     // A session that stopped shows why; a file no server is opened for shows nothing at all.
     return recorded && this.describe(recorded);
+  }
+
+  // The last line the server behind this file said that the page has not said yet: it is taken once, so a page opened
+  // again does not say it again.
+  takeMessage(options: OpenOptions) {
+    const message = this.sessionOf(this.keyOf(options))?.message;
+    if (!message || message.shown) return undefined;
+    message.shown = true;
+    return message;
   }
 
   // Starts the server behind this file: a running session is dropped first, while a file with no server behind it — one
