@@ -22,15 +22,14 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   const nestedBody = `${nestedLine}\n`;
   writeFileSync(nested, nestedBody);
   await showWritten(page, main, mainBody, grepToken);
-  // The list comes from the workspace's own directory, and nothing is chosen yet: the selection stands on the row of the
-  // entry the tab is on, and the page stays there.
+  // The list comes from the workspace's own directory, and opening it leaves the page where it was.
   await openSearch(page);
   const mainRow = searchRow(page, basename(main));
   await mainRow.waitFor();
   // Longer than the picker's rest before it follows a selection, so a page that was going to move has moved.
   await page.waitForTimeout(400);
   assert.ok(await shows(shownPanel(page), main));
-  assert.equal(await mainRow.getAttribute('aria-current'), 'true');
+  assert.equal(await searchPanel(page).locator('[aria-current]').count(), 0);
   assert.equal(await searchPanel(page).evaluate((element) => getComputedStyle(element).fontSize), '12px');
   // Typed a letter at a time, with a pause long enough for the page to follow each one: none of that may take the
   // keyboard out of the input.
@@ -148,14 +147,10 @@ test('a query matching more rows than the picker shows brings them all to the ca
   assert.deepEqual(errors, []);
 }));
 
-test('a file the list does not hold leaves nothing under the selection', { timeout: 120000 }, () => withWindow('wangcai-editor-search-absent', lists, async ({ home, page, errors }) => {
-  // The picker lists the workspace's paths, and a path it leaves out is where a file past the cap stands too: the entry the
-  // tab is on has no row of its own, so nothing is under the selection, and Enter opens no file the reader never picked.
-  writeFileSync(join(home, 'listed.ts'), 'export const listed = 1;\n');
-  // A hidden path is not in the list, and the page opens it like any other file.
-  const hidden = join(home, '.hidden.ts');
-  const hiddenLine = 'export const hidden = 1;';
-  await showWritten(page, hidden, `${hiddenLine}\n`, hiddenLine);
+test('nothing is under the selection until a row is chosen', { timeout: 120000 }, () => withWindow('wangcai-editor-search-open', lists, async ({ home, page, errors }) => {
+  const listed = join(home, 'listed.ts');
+  const listedLine = 'export const listed = 1;';
+  await showWritten(page, listed, `${listedLine}\n`, listedLine);
   await openSearch(page);
   const firstRow = searchRows(page).first();
   await firstRow.waitFor();
@@ -164,7 +159,7 @@ test('a file the list does not hold leaves nothing under the selection', { timeo
   await page.keyboard.press('Enter');
   await page.waitForTimeout(400);
   assert.equal(await searchPanel(page).count(), 1);
-  assert.ok(await shows(shownPanel(page), hidden));
+  assert.ok(await shows(shownPanel(page), listed));
   // A key that asks for a row still takes the first of them.
   await page.keyboard.press('ArrowDown');
   assert.equal(await firstRow.getAttribute('aria-current'), 'true');

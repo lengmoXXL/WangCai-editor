@@ -559,8 +559,8 @@ const Glass = ({ className }: { className?: string }) => (
 // stands for is seen before Enter opens it.
 function Search({ context, visited, workspace, peek, navigate, close }: { context: UiContext; visited: HistoryEntry; workspace: string; peek: (file: FileClick) => void; navigate: (file: FileClick) => void; close: () => void }) {
   const [query, setQuery] = useState('');
-  // A row is chosen by the user or not at all: until one is, the selection marks the row of the entry the tab is on and
-  // nothing is followed, so opening the picker does not take the reader away from what they were reading.
+  // A row is chosen by the user or not at all: until one is, nothing is marked and nothing is followed, so opening the
+  // picker does not take the reader away from what they were reading.
   const [chosen, setChosen] = useState<number>();
   // Each source's latest answer, with `undefined` for having none to draw: none has arrived yet, or the query was emptied.
   // An answer stays on show while the next one is on its way.
@@ -659,12 +659,7 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
       .map((one) => ({ ...one.obj, marks: one.indexes })));
   }, [mode, needle, directory, visited.machine, visited.path, files, matches, symbols]);
   const note = status?.mode === mode ? status.text : '';
-  // The index of the row standing for the entry the tab is on, if the rows hold it.
-  const entryRow = rows.findIndex((row) => row.target.path === visited.path && (row.target.line === undefined || row.target.line === visited.line));
-  // Rows arrive after the keystroke that asked for them, so the chosen one is kept within what is on show. An entry the
-  // rows do not hold, past the cap the unfiltered list is drawn with, leaves nothing under the selection: Enter then
-  // opens no file the reader never picked.
-  const at = Math.min(chosen ?? entryRow, rows.length - 1);
+  const at = chosen === undefined ? -1 : Math.min(chosen, rows.length - 1);
   useEffect(() => { list.current?.querySelector('[aria-current]')?.scrollIntoView({ block: 'nearest' }); }, [at, rows]);
   // A name typed a letter at a time would otherwise read a file per letter, so the row under the selection is taken
   // once the selection rests.
