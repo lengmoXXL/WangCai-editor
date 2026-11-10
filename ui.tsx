@@ -23,6 +23,24 @@ let font: Font;
 let chrome: Extension[] = [];
 let services: LanguageServices | undefined;
 const histories = new Map<string, History>();
+// The most the tab remembers of where it has been: the oldest visits go once there are more than this.
+const historyCeiling = 200;
+// A jump records the place it leaves and the place it lands on, so the moves made in one turn write the history once, on
+// the turn after them; a tab closing and the plugin going away have no turn after them to wait for.
+let pendingSave: ReturnType<typeof setTimeout> | undefined;
+const writeHistory = (context: UiContext) => { void context.ui.request('save-history', Object.fromEntries(histories)).catch(() => undefined); };
+const saveHistory = (context: UiContext) => {
+  if (pendingSave !== undefined) return;
+  pendingSave = setTimeout(() => { pendingSave = undefined; writeHistory(context); });
+};
+const saveHistoryNow = (context: UiContext) => {
+  clearTimeout(pendingSave);
+  pendingSave = undefined;
+  writeHistory(context);
+};
+// The page each tab has mounted, by the history it shows: a history moves to another workspace key, and the page goes with
+// it.
+const pages = new Map<History, Navigate>();
 
 // A jump's target as the visit that lands on it, on the machine the file it was answered for lives on.
 const visit = (target: Target, machine: FileClick['machine']): FileClick =>
@@ -33,6 +51,9 @@ const visit = (target: Target, machine: FileClick['machine']): FileClick =>
 // it; it lives in this window only, and the plugin going away drops it.
 const drafts = new Map<string, string>();
 const fileKey = (file: FileClick) => `${machineKey(file.machine)}|${file.path}`;
+// The key a tab's history is kept under: the workspace it is shown in, and no workspace for a tab the shell has not given
+// one yet.
+const workspaceKey = (workspaceId?: string) => workspaceId ?? '';
 
 // The directory a visit points into: a directory is its own, and a file's is the one it sits in.
 const directoryOf = (file: FileClick) => (file.type === 'directory' ? file.path : file.path.slice(0, file.path.lastIndexOf('/')) || '/');
@@ -88,8 +109,10 @@ const watch = (context: UiContext, machine: FileClick['machine'], holder: string
 const writing = (target: EventTarget | null) => target instanceof HTMLElement && ['INPUT', 'TEXTAREA'].includes(target.tagName);
 
 type Remember = (entry: HistoryEntry, at: Partial<Position>) => void;
+// A jump names the place it lands on, and the visit it leaves behind for the way back, if it makes one of its own.
+type Navigate = (file: FileClick, departure?: HistoryEntry) => void;
 // What the tab hands a page it shows.
-type PageProps = { context: UiContext; file: HistoryEntry; navigate: (file: FileClick) => void; back?: () => void; forward?: () => void; openSearch: () => void };
+type PageProps = { context: UiContext; file: HistoryEntry; navigate: Navigate; back?: () => void; forward?: () => void; openSearch: () => void };
 // A place in a file, counted from zero the way a server is asked about it.
 type Place = { line: number; character: number };
 
@@ -251,7 +274,7 @@ function Overlay({ className, role, label, at, onClose, children }: {
 
 type Editing = { onDoc: (text: string) => void; save: () => void };
 
-function EditorPage({ file, text, remember, peeking, navigate, editing }: { file: HistoryEntry; text: string; remember: Remember; peeking: boolean; navigate: (file: FileClick) => void; editing: Editing }) {
+function EditorPage({ file, text, remember, peeking, navigate, editing }: { file: HistoryEntry; text: string; remember: Remember; peeking: boolean; navigate: Navigate; editing: Editing }) {
   const element = useRef<HTMLDivElement>(null);
   const control = useRef<EditorView>(undefined);
   // The view reaches back through this, so the one built once keeps calling the current render's callbacks.
@@ -277,14 +300,10 @@ function EditorPage({ file, text, remember, peeking, navigate, editing }: { file
     setSession(running.session(options));
     return running.subscribe(() => setSession(running.session(options)));
   }, [options]);
-  // A jump from the caret is two visits of the tab's history: the place it leaves, taken at the caret so going back
-  // returns to it, and the place it lands on.
   const jumpFrom = (target: Target) => {
     const view = control.current;
     if (!view) return;
-    const at = positionOf(view);
-    navigate({ type: 'file', machine: file.machine, path: file.path, line: at.line, column: at.column });
-    navigate(visit(target, file.machine));
+    navigate(visit(target, file.machine), { ...file, ...positionOf(view) });
   };
   // One of the questions the menu and the keys ask about a place in this file. References are always a list to pick from,
   // and a jump that turned out to name more than one place is too; a jump with one place is followed.
@@ -336,20 +355,25 @@ function EditorPage({ file, text, remember, peeking, navigate, editing }: { file
     const view = control.current;
     if (view) view.dispatch({ effects: server.reconfigure(link) });
   }, [server, link]);
-  // Where the view sits: the caret goes on the line the entry names, and the scroll is put back at the offset the file
-  // was left at, or else centred on that line. A view that was built again starts at its own top with the caret at the
-  // first line, so both are taken for it once more; a panel that has given it no height yet places it on a later frame.
-  // The offset is read once per view, so what this runs for is a view being built and a jump that names another place.
-  const placement = useRef<{ view: EditorView; offset?: number }>(undefined);
+  // Where the view sits: the caret goes on the line the entry names, the scroll is put back at the offset the file was
+  // left at, or else centred on that line, and an entry that names no place is the file at its top. A view built again
+  // starts at its own top with the caret at the first line, so the entry is placed for it once more; a panel that has
+  // given it no height yet places it on a later frame. What this runs for is a view being built and another entry being
+  // shown.
+  const placement = useRef<{ view: EditorView; entry?: HistoryEntry; offset?: number }>(undefined);
   useEffect(() => {
     const view = control.current;
     if (!view) return;
-    if (placement.current?.view !== view) placement.current = { view, offset: file.top };
+    if (placement.current?.view !== view) placement.current = { view };
     const placing = placement.current;
+    const moved = placing.entry !== file;
+    if (moved) { placing.entry = file; placing.offset = file.top; }
     // A line past the end of the text and a column past the end of its line both come back to the last one there is.
     const row = file.line === undefined ? undefined : view.state.doc.line(Math.min(file.line, view.state.doc.lines));
-    const at = row && Math.min(row.from + (file.column ?? 1) - 1, row.to);
-    if (at !== undefined) view.dispatch({ selection: { anchor: at } });
+    const named = row && Math.min(row.from + (file.column ?? 1) - 1, row.to);
+    const at = named ?? (moved ? 0 : undefined);
+    // A caret already where the entry names is left alone, so a move of the entry is not recorded for it.
+    if (at !== undefined && view.state.selection.main.anchor !== at) view.dispatch({ selection: { anchor: at } });
     let frames = 0;
     const place = () => {
       if (!view.dom.clientHeight) return false;
@@ -767,7 +791,7 @@ export function open(context: UiContext, record?: TabRecord) {
 }
 
 function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
-  const key = workspaceId ?? '';
+  const key = workspaceKey(workspaceId);
   const history = histories.get(key) ?? { entries: [], index: -1 };
   histories.set(key, history);
   // What the tab shows on top of the page the history points at: the search picker, and the file its selection stands
@@ -783,12 +807,14 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
     if (same && (file.line === undefined || (file.line === standing.line && file.column === standing.column))) return;
     history.entries = [...history.entries.slice(0, history.index + 1), file];
     history.index++;
-    void context.ui.request('save-history', Object.fromEntries(histories));
+    const over = history.entries.length - historyCeiling;
+    if (over > 0) { history.entries = history.entries.slice(over); history.index -= over; }
+    saveHistory(context);
   };
   if (file) push(file);
   context.host.tabs({ ...identity, workspaceId, onClose() {
     for (const [savedKey, saved] of histories) if (saved === history) histories.delete(savedKey);
-    void context.ui.request('save-history', Object.fromEntries(histories));
+    saveHistoryNow(context);
     // The file every tab shows, which is what decides whether a language server is still needed anywhere.
     void services?.closeUnused([...histories.values()].map((saved) => saved.entries[saved.index]).filter((shown): shown is FileClick => shown?.type === 'file'));
   }, mount(container: HTMLElement) {
@@ -800,12 +826,13 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       Object.assign(view, { searching: false, peeked: undefined }, next);
       render();
     };
-    const navigate = (file: FileClick) => {
+    const navigate: Navigate = (file, departure) => {
       // A directory is the files view's to draw, so it is handed on rather than opened here.
       if (file.type === 'directory') {
         void context.global.publish('onclick', file);
         return;
       }
+      if (departure) push(departure);
       push(file);
       show();
     };
@@ -816,7 +843,7 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
     // Walking the tab's history: the entry it lands on is saved with the rest, and the search it leaves is cleared.
     const step = (by: number) => {
       history.index += by;
-      void context.ui.request('save-history', Object.fromEntries(histories));
+      saveHistory(context);
       show();
     };
     const canStep = (by: number) => history.entries[history.index + by] !== undefined;
@@ -865,7 +892,8 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       closeSearch={closeSearch}
       peek={peek}
       />);
-    return { onSelect: render, dispose: () => { mounted.unmount(); unbindKeys(); for (const off of offEvents) off(); } };
+    pages.set(history, navigate);
+    return { onSelect: render, dispose: () => { pages.delete(history); mounted.unmount(); unbindKeys(); for (const off of offEvents) off(); } };
   } });
 }
 
@@ -881,25 +909,32 @@ export async function mount(_container: HTMLElement, context: UiContext) {
   const offActive = context.global.subscribe<WorkspaceActive | null>('workspace:active', (value) => {
     activeWorkspaceId = value?.workspaceId;
     // The shell moves unscoped tabs into the first selected workspace.
-    const unassigned = histories.get('');
+    const unscoped = workspaceKey();
+    const unassigned = histories.get(unscoped);
     if (activeWorkspaceId !== undefined && unassigned) {
-      histories.delete('');
-      histories.set(activeWorkspaceId, unassigned);
-      void context.ui.request('save-history', Object.fromEntries(histories));
+      histories.delete(unscoped);
+      histories.set(workspaceKey(activeWorkspaceId), unassigned);
+      saveHistory(context);
     }
   });
   void context.global.publish('workspace:query', null);
-  // Every file click a plugin publishes lands here, and the tab then shows that file; a directory is the files view's to
-  // draw, and the files view has a tab of its own.
+  // Every file click a plugin publishes lands here, on the page this window already has for the workspace when there is
+  // one, so a jump from elsewhere does not build the tab again. A directory is the files view's to draw, and the files
+  // view has a tab of its own.
   const off = context.global.subscribe<FileClick>('onclick', (file) => {
     if (file.type !== 'file') return;
-    openTab(context, activeWorkspaceId, file);
+    const history = histories.get(workspaceKey(activeWorkspaceId));
+    const navigate = history && pages.get(history);
+    if (navigate) navigate(file);
+    else openTab(context, activeWorkspaceId, file);
     void context.global.publish('core:show-view', { plugin: identity.id });
   });
   return () => {
     offActive();
     off();
+    saveHistoryNow(context);
     histories.clear();
+    pages.clear();
     drafts.clear();
     services?.dispose();
     services = undefined;

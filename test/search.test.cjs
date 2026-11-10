@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { mkdirSync, writeFileSync } = require('node:fs');
 const { basename, join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { codeShowing, dismissSearch, editorFocused, fileSearchEmpty, landedOn, lists, openSearch, queryApplied, search, searchInput, searchMarks, searchPanel, searchRow, searchRowEntries, searchRows, shownPanel, shows, showWritten, submitSearch, waitForPath } = require('./editor-ui.cjs');
+const { clickFile, codeShowing, dismissSearch, editorFocused, fileSearchEmpty, landedOn, lists, machine, openSearch, queryApplied, search, searchInput, searchMarks, searchPanel, searchRow, searchRowEntries, searchRows, shownPanel, shows, showWritten, storedHistory, submitSearch, waitForPath } = require('./editor-ui.cjs');
 
 const rowLimit = 200;
 
@@ -212,5 +212,31 @@ test('the flags after the separator narrow what a content search greps', { timeo
   await searchRow(page, `${basename(two)}:1`).waitFor();
   assert.equal(await searchRow(page, `${basename(one)}:1`).count(), 0);
   await dismissSearch(page);
+  assert.deepEqual(errors, []);
+}));
+
+test('a row under the mouse is shown without being visited, and a key in the box walks nothing', { timeout: 120000 }, () => withWindow('wangcai-editor-search-peek', lists, async ({ home, page, errors }) => {
+  const first = join(home, 'firstShown.ts');
+  const second = join(home, 'secondShown.ts');
+  const firstLine = 'export const firstShown = 1;';
+  const secondLine = 'export const secondShown = 1;';
+  writeFileSync(second, `${secondLine}\n`);
+  await showWritten(page, first, `${firstLine}\n`, firstLine);
+  await clickFile(page, { type: 'file', machine, path: second });
+  await landedOn(page, second, secondLine);
+  await openSearch(page);
+  const row = searchRow(page, basename(first));
+  await row.waitFor();
+  await row.hover();
+  await waitForPath(shownPanel(page), first);
+  const [history] = Object.values(await storedHistory(page));
+  assert.equal(history.entries.length, 2);
+  await searchInput(page).click();
+  await page.keyboard.type('Shown', { delay: 60 });
+  await page.keyboard.press('Control+o');
+  await page.waitForTimeout(600);
+  assert.equal(await searchPanel(page).count(), 1);
+  await dismissSearch(page);
+  await waitForPath(shownPanel(page), second);
   assert.deepEqual(errors, []);
 }));

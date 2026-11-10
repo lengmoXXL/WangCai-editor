@@ -166,6 +166,21 @@ test('a file is shown again where it was left', { timeout: 120000 }, () => withW
   assert.deepEqual(errors, []);
 }));
 
+test('a visit that names no place is the file at its top, which the jump after it comes back to', { timeout: 180000 }, () => withWindow('wangcai-editor-jump-top', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'long.ts');
+  const longLine = (index) => `const line${index} = ${index};`;
+  const body = Array.from({ length: 300 }, (_, index) => longLine(index + 1)).join('\n') + '\n';
+  await showWritten(page, file, body, longLine(1));
+  // A link that names a line of the file already on show is a visit of its own.
+  await clickFile(page, { ...visitTo(file), line: 200, column: 1 });
+  await landedOn(page, file, longLine(200));
+  await page.keyboard.press('Control+o');
+  await landedOn(page, file, longLine(1));
+  await page.keyboard.press('Control+i');
+  await landedOn(page, file, longLine(200));
+  assert.deepEqual(errors, []);
+}));
+
 test('navigation history recovers its position and follows workspace tab ownership', { timeout: 180000 }, () => withHome('wangcai-editor-recover', { ...lists, tabs: [editorPlugin] }, async ({ home, open }) => {
   let { page, close } = await open();
   const code = join(home, 'first.ts');
