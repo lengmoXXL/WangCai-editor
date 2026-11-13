@@ -144,6 +144,9 @@ const selectionMarks = (scope) => codeSurface(scope).locator(`.${selectionClass}
 
 // Whether an editor in this window is holding the keyboard.
 const editorFocused = (page) => codeSurface(page).evaluateAll((scopes) => scopes.some((scope) => scope.contains(document.activeElement)));
+// What the keyboard is on, named as the page announces it: the button Enter would press.
+const focusedName = (page) => page.evaluate(() => (document.activeElement?.getAttribute('aria-label') || document.activeElement?.textContent || '').trim());
+const focusOn = (page, name) => until(async () => (await focusedName(page)) === name);
 
 // The mark the header carries while the text has parted from the file it came from.
 const dirtyMark = (scope) => scope.locator('.editor-dirty');
@@ -157,6 +160,13 @@ const typeInto = async (page, text) => {
   await page.keyboard.press('Escape');
   await dirtyMark(shownPanel(page)).waitFor();
 };
+
+// The row a page draws when the file changed under a draft, the two answers it offers, and the mark the header keeps once
+// that row was answered by keeping the draft.
+const conflictRow = (scope) => scope.locator('.editor-conflict');
+const conflictLoad = (scope) => conflictRow(scope).getByRole('button', { name: '载入磁盘的那份', exact: true });
+const conflictKeep = (scope) => conflictRow(scope).getByRole('button', { name: '留着我的改动', exact: true });
+const conflictMark = (scope) => scope.getByRole('button', { name: '磁盘上的文件变了', exact: true });
 
 // The dot the language service behind the file is shown by, in the state it is asked about.
 const lspDot = (scope, state) => scope.locator(`.editor-lsp.${state}`);
@@ -191,6 +201,7 @@ const diagnostics = (scope) => codeSurface(scope).locator('[class*=cm-lintRange]
 const backButton = (page) => page.getByRole('button', { name: '后退', exact: true });
 const forwardButton = (page) => page.getByRole('button', { name: '前进', exact: true });
 const refreshButton = (scope) => scope.getByRole('button', { name: '刷新', exact: true });
+const loadButton = (scope) => scope.getByRole('button', { name: '载入', exact: true });
 const openDirectoryButton = (page) => page.getByRole('button', { name: '打开所在目录', exact: true });
 
 // The right sidebar is shown and hidden by its own button, and added to from the button beside it.
@@ -333,8 +344,13 @@ module.exports = {
   selectionClass,
   selectionMarks,
   editorFocused,
+  focusOn,
   dirtyMark,
   typeInto,
+  conflictRow,
+  conflictLoad,
+  conflictKeep,
+  conflictMark,
   lspDot,
   lspDetail,
   noServerReason,
@@ -347,6 +363,7 @@ module.exports = {
   backButton,
   forwardButton,
   refreshButton,
+  loadButton,
   openDirectoryButton,
   sidebarToggle,
   newSidebarTab,

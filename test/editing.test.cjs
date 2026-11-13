@@ -3,10 +3,12 @@ const assert = require('node:assert/strict');
 const { chmodSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { alert, backButton, codeShowing, dirtyMark, drawnLines, lists, refreshButton, showAfter, showFile, shownPanel, showWritten, typeInto } = require('./editor-ui.cjs');
+const { alert, backButton, codeShowing, conflictKeep, conflictLoad, conflictMark, conflictRow, dirtyMark, drawnLines, editorFocused, focusOn, lists, loadButton, refreshButton, showAfter, showFile, shownPanel, showWritten, typeInto } = require('./editor-ui.cjs');
 
 // The key the plugin answers a write with itself, beside the `:w` that `writeWithEx` below types.
 const saveKey = 'Control+s';
+// The key that puts the keyboard on the answer to a file that changed on disk.
+const answerKey = 'Control+g';
 
 // What the cases below open and type, and the same texts as the page draws them.
 const keptLine = 'const kept = 1;';
@@ -17,6 +19,9 @@ const draftLine = '// draft';
 const draftBody = `${draftLine}\n`;
 // The file as the page's first write leaves it: the typed line above the line it was opened with.
 const writtenBody = `${noteBody}${keptBody}`;
+// What another writer leaves a file holding while the page has a draft over it.
+const changedLine = 'const changed = 2;';
+const changedBody = `${changedLine}\n`;
 
 // A write that landed: the file holds that text, and the header no longer marks the page.
 const wroteBack = async (page, file, text) => {
@@ -64,10 +69,10 @@ test('an edit is written back by :w and by <C-s>, and the header says when it ha
   assert.deepEqual(errors, []);
 }));
 
-test('a refresh drops what has not been written back and draws the file as it is', { timeout: 120000 }, () => withWindow('wangcai-editor-refresh', lists, async ({ home, page, errors }) => {
-  const file = join(home, 'refresh.ts');
+test('a load drops what has not been written back and draws the file as it is', { timeout: 120000 }, () => withWindow('wangcai-editor-load', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'load.ts');
   await showWritten(page, file, keptBody, keptLine);
-  // Written back first so the disk holds a text of its own: what the refresh draws then differs both from the draft typed
+  // Written back first so the disk holds a text of its own: what the load draws then differs both from the draft typed
   // over it and from the file this page was opened as.
   await typeInto(page, noteBody);
   await writeWithEx(page);
@@ -75,11 +80,41 @@ test('a refresh drops what has not been written back and draws the file as it is
   const droppedLine = 'const dropped = 2;';
   const droppedBody = `${droppedLine}\n`;
   await typeInto(page, droppedBody);
-  await refreshButton(shownPanel(page)).click();
+  await loadButton(shownPanel(page)).click();
   await codeShowing(shownPanel(page), droppedLine).waitFor({ state: 'detached' });
   await dirtyMark(shownPanel(page)).waitFor({ state: 'detached' });
   assert.deepEqual(await drawnLines(page), [noteLine, keptLine, '']);
   assert.equal(readFileSync(file, 'utf8'), writtenBody);
+  assert.deepEqual(errors, []);
+}));
+
+test('a file changed on disk under a draft is said so, and the draft is what the page goes on drawing', { timeout: 120000 }, () => withWindow('wangcai-editor-conflict', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'conflict.ts');
+  await showWritten(page, file, keptBody, keptLine);
+  await typeInto(page, noteBody);
+  writeFileSync(file, changedBody);
+  await conflictRow(shownPanel(page)).waitFor();
+  await conflictMark(shownPanel(page)).waitFor();
+  assert.deepEqual(await drawnLines(page), [noteLine, keptLine, '']);
+  assert.equal(readFileSync(file, 'utf8'), changedBody);
+  // Keeping the draft puts the row away and leaves the mark, and the mark asks for the row again.
+  await conflictKeep(shownPanel(page)).click();
+  await conflictRow(shownPanel(page)).waitFor({ state: 'detached' });
+  await conflictMark(shownPanel(page)).click();
+  await conflictRow(shownPanel(page)).waitFor();
+  // The refresh reads the file again with the draft still there, so what it finds is said once more.
+  await conflictKeep(shownPanel(page)).click();
+  await conflictRow(shownPanel(page)).waitFor({ state: 'detached' });
+  await refreshButton(shownPanel(page)).click();
+  await conflictRow(shownPanel(page)).waitFor();
+  assert.deepEqual(await drawnLines(page), [noteLine, keptLine, '']);
+  // The row's own load hands the page the file's text, and nothing is left to mark.
+  await conflictLoad(shownPanel(page)).click();
+  await codeShowing(shownPanel(page), changedLine).waitFor();
+  await conflictRow(shownPanel(page)).waitFor({ state: 'detached' });
+  await dirtyMark(shownPanel(page)).waitFor({ state: 'detached' });
+  assert.deepEqual(await drawnLines(page), [changedLine, '']);
+  assert.equal(readFileSync(file, 'utf8'), changedBody);
   assert.deepEqual(errors, []);
 }));
 
@@ -124,21 +159,119 @@ test('an unsaved edit stays with its file while the tab shows another one', { ti
   assert.deepEqual(await drawnLines(page), [otherLine, '']);
   await showAfter(page, backButton(page), draftLine);
   await dirtyMark(shownPanel(page)).waitFor();
+  // A draft of its own is no conflict: the file it was made on is the file still there.
+  assert.equal(await conflictRow(shownPanel(page)).count(), 0);
   assert.equal(readFileSync(edited, 'utf8'), editedBody);
   assert.deepEqual(errors, []);
 }));
 
-test('a file changed on disk by something else replaces what the page held', { timeout: 120000 }, () => withWindow('wangcai-editor-edit-changed', lists, async ({ home, page, errors }) => {
-  const file = join(home, 'changed.ts');
-  const beforeLine = 'const before = 1;';
-  const beforeBody = `${beforeLine}\n`;
-  const afterLine = 'const after = 2;';
-  const afterBody = `${afterLine}\n`;
-  await showWritten(page, file, beforeBody, beforeLine);
-  await typeInto(page, draftBody);
-  writeFileSync(file, afterBody);
-  await codeShowing(shownPanel(page), afterLine).waitFor();
+test('a conflict answered by a write leaves the file holding what the page held', { timeout: 120000 }, () => withWindow('wangcai-editor-conflict-write', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'over.ts');
+  await showWritten(page, file, keptBody, keptLine);
+  await typeInto(page, noteBody);
+  writeFileSync(file, changedBody);
+  await conflictRow(shownPanel(page)).waitFor();
+  await page.keyboard.press(saveKey);
+  await wroteBack(page, file, writtenBody);
+  await conflictRow(shownPanel(page)).waitFor({ state: 'detached' });
+  // The watch hears this page's own write, which is nothing to choose between.
+  await page.waitForTimeout(500);
+  assert.equal(await conflictRow(shownPanel(page)).count(), 0);
+  assert.equal(await dirtyMark(shownPanel(page)).count(), 0);
+  assert.deepEqual(errors, []);
+}));
+
+test('a file that changed while the tab showed another one says so when it comes back', { timeout: 120000 }, () => withWindow('wangcai-editor-conflict-away', lists, async ({ home, page, errors }) => {
+  const away = join(home, 'away.ts');
+  const other = join(home, 'away-other.ts');
+  const otherLine = 'const other = 1;';
+  await showWritten(page, away, keptBody, keptLine);
+  writeFileSync(other, `${otherLine}\n`);
+  await typeInto(page, noteBody);
+  await showFile(shownPanel(page), other, otherLine);
+  writeFileSync(away, changedBody);
+  await showAfter(page, backButton(page), noteLine);
+  await conflictRow(shownPanel(page)).waitFor();
+  assert.deepEqual(await drawnLines(page), [noteLine, keptLine, '']);
+  assert.equal(readFileSync(away, 'utf8'), changedBody);
+  // The header's load is the same answer from outside the row.
+  await loadButton(shownPanel(page)).click();
+  await codeShowing(shownPanel(page), changedLine).waitFor();
   await dirtyMark(shownPanel(page)).waitFor({ state: 'detached' });
-  assert.deepEqual(await drawnLines(page), [afterLine, '']);
+  assert.deepEqual(await drawnLines(page), [changedLine, '']);
+  assert.deepEqual(errors, []);
+}));
+
+test('the conflict row is answered from the keyboard, and the keys go back to the text with it', { timeout: 120000 }, () => withWindow('wangcai-editor-conflict-keys', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'keys.ts');
+  await showWritten(page, file, keptBody, keptLine);
+  await typeInto(page, noteBody);
+  writeFileSync(file, changedBody);
+  await conflictRow(shownPanel(page)).waitFor();
+  // A row that appears under typing leaves the keyboard where it was.
+  assert.ok(await editorFocused(page));
+  await page.keyboard.press(answerKey);
+  await focusOn(page, '载入磁盘的那份');
+  assert.ok(!(await editorFocused(page)));
+  // j and k walk the two answers, wrapping at the ends of them.
+  await page.keyboard.press('j');
+  await focusOn(page, '留着我的改动');
+  await page.keyboard.press('j');
+  await focusOn(page, '载入磁盘的那份');
+  await page.keyboard.press('k');
+  await focusOn(page, '留着我的改动');
+  await page.keyboard.press('ArrowRight');
+  await focusOn(page, '载入磁盘的那份');
+  await page.keyboard.press('Enter');
+  await codeShowing(shownPanel(page), changedLine).waitFor();
+  await conflictRow(shownPanel(page)).waitFor({ state: 'detached' });
+  await dirtyMark(shownPanel(page)).waitFor({ state: 'detached' });
+  await until(() => editorFocused(page));
+  assert.deepEqual(await drawnLines(page), [changedLine, '']);
+  assert.equal(readFileSync(file, 'utf8'), changedBody);
+  assert.deepEqual(errors, []);
+}));
+
+test('Escape from the row keeps the draft, and the answer key asks for a row that was put away', { timeout: 120000 }, () => withWindow('wangcai-editor-conflict-esc', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'escape.ts');
+  await showWritten(page, file, keptBody, keptLine);
+  await typeInto(page, noteBody);
+  writeFileSync(file, changedBody);
+  await conflictRow(shownPanel(page)).waitFor();
+  await page.keyboard.press(answerKey);
+  await focusOn(page, '载入磁盘的那份');
+  await page.keyboard.press('j');
+  await focusOn(page, '留着我的改动');
+  await page.keyboard.press('Enter');
+  await conflictRow(shownPanel(page)).waitFor({ state: 'detached' });
+  await conflictMark(shownPanel(page)).waitFor();
+  await until(() => editorFocused(page));
+  assert.deepEqual(await drawnLines(page), [noteLine, keptLine, '']);
+  // The row was put away, so the key brings it back before the keyboard lands on it.
+  await page.keyboard.press(answerKey);
+  await conflictRow(shownPanel(page)).waitFor();
+  await focusOn(page, '载入磁盘的那份');
+  await page.keyboard.press('Escape');
+  await conflictRow(shownPanel(page)).waitFor({ state: 'detached' });
+  await until(() => editorFocused(page));
+  assert.deepEqual(await drawnLines(page), [noteLine, keptLine, '']);
+  assert.equal(readFileSync(file, 'utf8'), changedBody);
+  assert.deepEqual(errors, []);
+}));
+
+test('with no conflict the answer key lands on the header load, in insert mode as well', { timeout: 120000 }, () => withWindow('wangcai-editor-load-key', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'load-key.ts');
+  await showWritten(page, file, keptBody, keptLine);
+  await typeInto(page, noteBody);
+  // The key answers while the text is being typed into, which is where a change on disk usually arrives.
+  await page.keyboard.press('i');
+  await page.keyboard.press(answerKey);
+  await focusOn(page, '载入');
+  assert.equal(await conflictRow(shownPanel(page)).count(), 0);
+  await page.keyboard.press('Enter');
+  await dirtyMark(shownPanel(page)).waitFor({ state: 'detached' });
+  await until(() => editorFocused(page));
+  assert.deepEqual(await drawnLines(page), [keptLine, '']);
+  assert.equal(readFileSync(file, 'utf8'), keptBody);
   assert.deepEqual(errors, []);
 }));
