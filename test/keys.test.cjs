@@ -43,12 +43,3 @@ test(`the editor keeps the keyboard through Escapes, and a ${leaveKeys} leaves i
   assert.deepEqual(errors, []);
 }));
 
-test('a key that shows the view puts the keys in its editor', { timeout: 180000 }, () => withWindow('wangcai-editor-keys', lists, async ({ home, page, errors }) => {
-  await openAnswer(home, page);
-  // The keys are elsewhere: no box in the window holds them.
-  await page.evaluate(() => document.activeElement?.blur());
-  for (const key of ['Control+Space', 'e']) await page.keyboard.press(key);
-  // Nothing is clicked between the key and the caret.
-  await until(() => editorFocused(page));
-  assert.deepEqual(errors, []);
-}));

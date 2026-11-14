@@ -55,17 +55,11 @@ const createWorkspace = async (page) => {
 const viewTab = (page, name) => page.getByRole('tablist', { name: '侧栏标签页' }).getByRole('tab', { name, exact: true });
 const editorTab = (page) => viewTab(page, editorView);
 
-// Every sidebar tab, hidden ones included, which is what their styles are read off; the one that is selected; the
-// close button each of the drawn ones carries; and closing a named tab through the name its button is announced by.
+// Every sidebar tab, hidden ones included, which is what their styles are read off, and the close button each drawn one carries.
 const sidebarTabs = (page) => page.locator('.sidebar-tab');
-const selectedViewTab = (page) => sidebarTabs(page).filter({ has: page.locator('[aria-selected=true]') });
 const drawnCloseButtons = (page) => sidebarTabs(page).filter({ visible: true }).locator('.close-tab');
-const closeTab = (page, name) => page.getByRole('button', { name: `关闭 ${name}`, exact: true });
 
-// The window's two sidebars and the pane between them, plus the panels of the right one, the ones on show among them.
-const sidebarLeft = (page) => page.locator('.sidebar-left');
-const sidebarRight = (page) => page.locator('.sidebar-right');
-const desktopMain = (page) => page.locator('.desktop-main');
+// The panels of the right sidebar, the ones on show among them.
 const sidebarPanels = (page) => page.locator('.sidebar-panel');
 const shownPanel = (page) => sidebarPanels(page).filter({ visible: true });
 
@@ -202,13 +196,6 @@ const openDirectoryButton = (page) => page.getByRole('button', { name: '打开�
 const sidebarToggle = (page) => page.getByRole('button', { name: '切换右侧栏' });
 const newSidebarTab = (page) => page.getByRole('button', { name: '新建侧栏标签页' });
 
-// The line typed into a terminal pane.
-const runIn = async (pane, line) => {
-  const page = pane.page();
-  await pane.locator('.xterm-helper-textarea').focus();
-  await page.keyboard.type(line);
-  await page.keyboard.press('Enter');
-};
 
 // The menu a view is picked from, once that button has opened it.
 const viewMenu = (page) => page.locator('#view-menu');
@@ -305,12 +292,7 @@ module.exports = {
   viewTab,
   editorTab,
   sidebarTabs,
-  selectedViewTab,
   drawnCloseButtons,
-  closeTab,
-  sidebarLeft,
-  sidebarRight,
-  desktopMain,
   shownPanel,
   pluginElements,
   editorPanels,
@@ -355,7 +337,6 @@ module.exports = {
   openDirectoryButton,
   sidebarToggle,
   newSidebarTab,
-  runIn,
   viewMenu,
   openView,
   searchPanel,
