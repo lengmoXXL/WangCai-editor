@@ -20,13 +20,6 @@
 .editor-path { field-sizing: content; min-width: 8ch; max-width: 100%; height: 24px; padding: 0 6px; font: inherit; color: var(--wc-muted); background: transparent; border: 1px solid transparent; border-radius: 4px; }
 .editor-path:focus { color: var(--wc-foreground); background: var(--wc-overlay); outline: none; }
 .editor-dirty { flex-shrink: 0; color: var(--wc-muted); }
-/* The same mark for a draft the file has parted from, and it is a button: the row it stands for was answered by keeping the
-   draft, and this asks for that row again. */
-.editor-conflict-mark { width: 16px; height: 16px; padding: 0; font: inherit; font-weight: 600; line-height: 1; color: var(--wc-yellow); background: transparent; border: 0; border-radius: 3px; cursor: pointer; }
-.editor-conflict-mark:hover { background: var(--wc-overlay); }
-.editor-conflict-mark:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: -2px; }
-/* The load answers the conflict, so it takes the conflict's colour while one is up. */
-.editor-load.said { color: var(--wc-yellow); }
 /* The buttons after the path take the end of the row, whatever the path before them measures. They are one box of their
    own since the language service's dot comes and goes, and the end of the row cannot depend on one that may not be there. */
 .editor-tail { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin-left: auto; }
@@ -60,28 +53,8 @@
 /* What a page says went wrong is laid over it rather than holding a row of it open, and it takes no pointer: the text under
    it stays clickable for as long as it is up. */
 .notice { position: absolute; top: 40px; right: 12px; z-index: 6; max-width: 80%; padding: 6px 12px; white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; color: var(--wc-foreground); }
-/* A file that changed under a draft is said in a row of its own above the text, and it stays until it is answered: what is
-   under it is still being typed into. The row wraps rather than pushing its answers out of a narrow panel. */
-.editor-conflict { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 8px; font-size: 11px; line-height: 1.4; color: var(--wc-foreground); background: color-mix(in srgb, var(--wc-yellow) 12%, var(--wc-background)); border-bottom: 1px solid color-mix(in srgb, var(--wc-yellow) 45%, var(--wc-border)); animation: conflict-in 140ms ease-out; }
-.editor-conflict svg { flex-shrink: 0; width: 13px; height: 13px; fill: none; stroke: var(--wc-yellow); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
-.editor-conflict-text { flex: 1; min-width: 8em; overflow-wrap: anywhere; }
-/* The keys the row answers to, said under the message and changed by where the keyboard is: what it can do now, rather
-   than what it could do once it is asked for. */
-.editor-conflict-keys { display: block; margin-top: 2px; color: var(--wc-muted); font-size: 10px; }
-.editor-conflict-keys kbd { padding: 0 3px; font: inherit; color: var(--wc-foreground); background: var(--wc-overlay); border: 1px solid var(--wc-border); border-radius: 3px; }
-.editor-conflict-keys kbd + kbd { margin-left: 2px; }
-/* The row the keyboard is in says so, so which answer Enter would press is not left to be guessed. */
-.editor-conflict:focus-within { border-bottom-color: var(--wc-yellow); }
-.editor-conflict-act { flex-shrink: 0; padding: 2px 8px; font: inherit; color: var(--wc-muted); background: transparent; border: 1px solid var(--wc-border); border-radius: 3px; cursor: pointer; }
-.editor-conflict-act:hover { color: var(--wc-foreground); background: var(--wc-overlay); }
-.editor-conflict-act:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: -2px; }
-/* The answer that gives up the draft is the one drawn filled, in the colour the row is about. */
-.editor-conflict-act.primary { color: var(--wc-background); background: var(--wc-yellow); border-color: var(--wc-yellow); }
-.editor-conflict-act.primary:hover { color: var(--wc-background); background: color-mix(in srgb, var(--wc-yellow) 84%, var(--wc-foreground)); }
-@keyframes conflict-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .editor-conflict { animation: none; } }
-/* The text and what is laid over it. The notice is placed against this box rather than the pane, so a conflict's row above
-   the text does not end up under it. */
+/* The text and what is laid over it. The notice is placed against this box rather than the pane, so it sits over the text
+   it is about. */
 .editor-main { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .editor-main > .notice { top: 8px; }
 

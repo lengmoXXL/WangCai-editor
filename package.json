@@ -23,6 +23,7 @@
     "@lezer/highlight": "^1.2.5",
     "@replit/codemirror-vim": "^6.4.0",
     "fuzzysort": "^4.0.2",
+    "node-diff3": "^4.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

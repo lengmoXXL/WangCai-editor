@@ -3,8 +3,9 @@ import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, drawSelection, highlightActiveLine, lineNumbers } from '@codemirror/view';
 import { Vim, getCM, vim, type CodeMirrorV } from '@replit/codemirror-vim';
 import { createRoot } from 'react-dom/client';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import fuzzysort from 'fuzzysort';
+import { merge } from 'node-diff3';
 import type { WorkspaceActive } from '@lengmoxxl/sdk';
 import { bindKeys } from '@lengmoxxl/sdk/keys';
 import type { TabRecord, UiContext } from '@lengmoxxl/sdk/channel';
@@ -46,11 +47,6 @@ const pages = new Map<History, Navigate>();
 const visit = (target: Target, machine: FileClick['machine']): FileClick =>
   ({ type: 'file', machine, path: target.path, line: target.line, column: target.column });
 
-// The text a file was edited into and not written back, with the text it was edited from, by the file's identity: leaving
-// the file keeps it, and the page shows it again instead of what the file holds. What it was edited from is what tells a
-// file that changed on disk apart from the draft itself. Another tab may show the same file, so a tab closing says nothing
-// about it; it lives in this window only, and the plugin going away drops it.
-const drafts = new Map<string, { text: string; base: string }>();
 const fileKey = (file: FileClick) => `${machineKey(file.machine)}|${file.path}`;
 // The key a tab's history is kept under: the workspace it is shown in, and no workspace for a tab the shell has not given
 // one yet.
@@ -66,8 +62,8 @@ const pageOf = (element: HTMLElement | null) => element?.closest<HTMLElement>('[
 // its own types do not say.
 const viewOf = (cm: unknown) => (cm as { cm6?: EditorView }).cm6;
 
-// A key the vim layer answers asks the view it was typed into; the tab's `<C-s>` asks the one the page on show holds.
-const pageKeys = new Map<EditorView, { jump: (act: LocationFeature) => void; save: () => void }>();
+// A key the vim layer answers asks the view it was typed into.
+const pageKeys = new Map<EditorView, { jump: (act: LocationFeature) => void }>();
 
 // The keys the normal mode answers by our own actions: the key, and the question it asks the view, in the order the menu
 // offers those questions.
@@ -79,7 +75,7 @@ const vimCommands: [keys: string, act: LocationFeature][] = [
 ];
 
 // The keys are defined once for the whole window, not per view, since the vim layer is one state shared by every view.
-// `:w` is answered here too: the library maps it to a `write` of its own that saves nowhere.
+// `:w` and `<C-s>` are left to the library, which writes nowhere: the file is written back on its own.
 for (const [keys, act] of vimCommands) {
   const name = `wangcai-${act}`;
   Vim.defineAction(name, (cm) => {
@@ -88,10 +84,6 @@ for (const [keys, act] of vimCommands) {
   });
   Vim.mapCommand(keys, 'action', name, {}, { context: 'normal' });
 }
-Vim.defineEx('write', 'w', (cm) => {
-  const view = viewOf(cm);
-  if (view) pageKeys.get(view)?.save();
-});
 
 // A file this plugin reads as no language is nobody's to serve.
 const serviceFor = (file: FileClick): OpenOptions | undefined => {
@@ -194,8 +186,8 @@ function Notice({ text }: { text: string }) {
   return text ? <div className="notice" role="alert">{text}</div> : null;
 }
 
-function Navigation({ context, file, navigate, back, forward, openSearch, dirty, conflict, refresh, load, reveal, report }: PageProps & {
-  dirty: boolean; conflict: boolean; refresh: () => void; load: () => void; reveal: () => void; report: (text: string) => void;
+function Navigation({ context, file, navigate, back, forward, openSearch, dirty, refresh, report }: PageProps & {
+  dirty: boolean; refresh: () => void; report: (text: string) => void;
 }) {
   return <Header>
     <button className="editor-icon" aria-label="后退" title="后退" disabled={!back} onClick={back}>
@@ -204,18 +196,11 @@ function Navigation({ context, file, navigate, back, forward, openSearch, dirty,
     <button className="editor-icon" aria-label="前进" title="前进" disabled={!forward} onClick={forward}>
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m9 3 5 5-5 5 M2 8h12" /></svg>
     </button>
-    <button className="editor-icon" aria-label="刷新" title="重读文件，留着没写回的改动" onClick={refresh}>
+    <button className="editor-icon" aria-label="刷新" title="重读文件，并和这里的改动合并" onClick={refresh}>
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.3 6.7A5.3 5.3 0 1 0 12 12 M13.3 2.7v4h-4" /></svg>
     </button>
-    <button className={`editor-icon editor-load${conflict ? ' said' : ''}`} aria-label="载入"
-      title="载入磁盘上的那份，丢掉没写回的改动（⌃G 后回车）" onClick={load}>
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v7 M5 6.2 8 9.2l3-3 M2.5 12.8h11" /></svg>
-    </button>
     <Address context={context} base={file} navigate={navigate} report={report} />
-    {dirty && (conflict
-      ? <button type="button" className="editor-dirty editor-conflict-mark" aria-label="磁盘上的文件变了"
-        title="磁盘上的文件变了，和没写回的改动冲突；点一下或按 ⌃G 再说一次" onClick={reveal}>!</button>
-      : <span className="editor-dirty" role="status" aria-label="有未写回的改动" title="有未写回的改动">*</span>)}
+    {dirty && <span className="editor-dirty" role="status" aria-label="有未写回的改动" title="有未写回的改动">*</span>}
     <div className="editor-tail">
       <LspStatus file={file} report={report} />
       <button className="editor-icon" aria-label="打开所在目录" title="在 files 里打开当前文件所在的目录"
@@ -282,7 +267,7 @@ function Overlay({ className, role, label, at, onClose, children }: {
   </>;
 }
 
-type Editing = { onDoc: (text: string) => void; save: () => void };
+type Editing = { onDoc: (text: string) => void };
 
 function EditorPage({ file, text, remember, peeking, navigate, editing }: { file: HistoryEntry; text: { body: string }; remember: Remember; peeking: boolean; navigate: Navigate; editing: Editing }) {
   const element = useRef<HTMLDivElement>(null);
@@ -351,7 +336,7 @@ function EditorPage({ file, text, remember, peeking, navigate, editing }: { file
     view.scrollDOM.addEventListener('scroll', scrolled, { passive: true });
     // The keys are handed over as the view is built, so a key pressed as soon as the file appears finds its answer instead of
     // waiting for a later render.
-    pageKeys.set(view, { jump: (act) => void goAt(act, placeOf(view)), save: () => handlers.current.save() });
+    pageKeys.set(view, { jump: (act) => void goAt(act, placeOf(view)) });
     return () => {
       pageKeys.delete(view);
       view.scrollDOM.removeEventListener('scroll', scrolled);
@@ -481,13 +466,32 @@ function Shell({ children, ref }: { children: ReactNode; ref?: Ref<HTMLElement> 
   return <section className="editor" aria-label="编辑器" ref={ref}>{children}</section>;
 }
 
+// How long the typing rests before the buffer is written back on its own.
+const saveDelay = 500;
+
+// Three-way merge of the buffer and the disk over the text they last agreed on: changes that do not overlap are kept from
+// both sides, and where they overlap git-style markers are left for a person to answer.
+const mergeText = (base: string, ours: string, theirs: string) =>
+  merge(ours, base, theirs, { stringSeparator: '\n', label: { a: '编辑器', b: '磁盘' } }).result.join('\n');
+
+// The smallest edit that turns one text into another, so laying the disk's text into the view keeps the caret and undo.
+function editOf(current: string, next: string) {
+  let from = 0;
+  while (from < current.length && from < next.length && current[from] === next[from]) from += 1;
+  let end = 0;
+  while (end < current.length - from && end < next.length - from && current[current.length - 1 - end] === next[next.length - 1 - end]) end += 1;
+  return { from, to: current.length - end, insert: next.slice(from, next.length - end) };
+}
 function FileView({ context, file, navigate, back, forward, openSearch, holder, remember, peeking }: PageProps & { holder: string; remember: Remember; peeking: boolean }) {
-  // The text the next view is built with, which only a read sets; `baseline`, what the file itself holds; and `pageText`, the
-  // text the view holds now, which is what a write puts in the file. The read's text comes in a box of its own so that a
-  // read bringing back what the last one did still builds the view again: what was typed over it is not what the file holds.
+  // The text the next view is built with, which only the first read sets. The read's text comes in a box of its own so
+  // that a read bringing back what the last one did still builds the view again.
   const [text, setText] = useState<{ body: string }>();
+  // The text the buffer and the disk last agreed on: the ancestor a merge is weighed against.
   const baseline = useRef('');
+  // What the view holds now, and what the disk holds now: a write is only asked for when the two differ.
   const pageText = useRef('');
+  const disk = useRef('');
+  const loaded = useRef(false);
   // The text this page last put in the file, and how many times it has done so: a read still on its way when a write
   // lands is answering about the file as it was before it.
   const sent = useRef('');
@@ -495,34 +499,44 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
   // A read that failed leaves nothing to show; a write that failed is said over the page, with the text still on it.
   const [readError, setReadError] = useState('');
   const [notice, report] = useNotice();
-  const draftKey = fileKey(file);
-  // What has not been written back sits in `drafts`, and `dirty` — the mark the header draws — is kept with it, so the two
-  // never part.
   const [dirty, setDirty] = useState(false);
-  const hold = useCallback((draft?: string) => {
-    if (draft === undefined) drafts.delete(draftKey); else drafts.set(draftKey, { text: draft, base: baseline.current });
-    setDirty(draft !== undefined);
-  }, [draftKey]);
-  // The disk parting from the draft: `said` is the row above the text, and `mark` is what is left of that row once it was
-  // answered by keeping the draft — the header carries it until the page and the file agree again.
-  const [conflict, setConflict] = useState<'said' | 'mark'>();
-  // The pane the keys are bound to, the row they are answered in, and the text they go back to.
-  const shell = useRef<HTMLElement>(null);
-  const row = useRef<HTMLDivElement>(null);
   const main = useRef<HTMLDivElement>(null);
-  // Whether the row holds the keyboard, which is what its keys answer to and what the hint under the message says.
-  const [choosing, setChoosing] = useState(false);
-  // A row asked for by the keyboard takes it; one that appears under typing leaves the keys where they are.
-  const asked = useRef(false);
   const [refreshes, setRefreshes] = useState(0);
-  // A file is read when this page is built and again when the refresh or the load asks for it: the page is built for one
-  // file, so the path it shows cannot change under it, and a jump inside the file does not read it again.
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // A write lands: the disk holds this text now, and the buffer is measured against it for the mark and the next merge.
+  const write = (whole: string) => {
+    if (whole === disk.current) return;
+    void context.ui.request('write', { machine: file.machine, path: file.path, text: whole })
+      .then(() => {
+        writes.current += 1;
+        sent.current = whole;
+        disk.current = whole;
+        baseline.current = whole;
+        setDirty(pageText.current !== whole);
+        report('');
+      })
+      .catch((problem: Error) => report(problem.message));
+  };
+  // The buffer is written back on its own a moment after the typing stops.
+  const scheduleSave = () => {
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => write(pageText.current), saveDelay);
+  };
+  // The disk's text is laid into the view as the smallest edit that makes it, so the caret and the undo history stay.
+  const applyText = (next: string) => {
+    const view = main.current && EditorView.findFromDOM(main.current);
+    if (!view) { setText({ body: next }); return; }
+    const current = view.state.doc.toString();
+    if (current !== next) view.dispatch({ changes: editOf(current, next) });
+  };
+  // A file is read when this page is built and again when the refresh asks for it: the page is built for one file, so the
+  // path it shows cannot change under it, and a jump inside the file does not read it again.
   useEffect(() => {
     let alive = true;
-    setText(undefined); setReadError('');
+    if (!loaded.current) setText(undefined);
+    setReadError('');
     // `quiet` marks a read the page did not ask for, the file changing on disk, where one that brings back what this page
-    // last wrote is no news — the file holds it already, and what was typed after that write has not reached the file. A
-    // page that has not written anything yet has nothing to hear its own echo in.
+    // last wrote is no news — the file holds it already. A page that has not written anything yet has no echo to hear.
     const read = (quiet?: boolean) => {
       const writesAtRead = writes.current;
       void context.ui.request<string>('read', file).then((content) => {
@@ -530,108 +544,47 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
         if (quiet && writesAtRead > 0 && content === sent.current) return;
         setReadError('');
         report('');
-        const held = drafts.get(draftKey);
-        // A draft is held against the text it was made on, which is what tells a file that changed under it apart from the
-        // draft itself: the first is a conflict to answer, the second is what the page goes on drawing. A file that came to
-        // hold the draft has nothing left to choose between.
-        const kept = held && held.text !== content ? held : undefined;
-        setConflict(kept && kept.base !== content ? 'said' : undefined);
-        // What is drawn already is left as it is: a file changing on disk takes neither the caret nor the undo history of
-        // what is being typed.
-        if (quiet && kept) return;
-        const drawn = kept ? kept.text : content;
-        baseline.current = kept ? kept.base : content;
-        hold(kept ? drawn : undefined);
-        pageText.current = drawn;
-        setText({ body: drawn });
+        if (!loaded.current) {
+          loaded.current = true;
+          baseline.current = content;
+          disk.current = content;
+          pageText.current = content;
+          setText({ body: content });
+          return;
+        }
+        if (content === disk.current) return;
+        // The disk changed under the buffer: merge the two over what they last agreed on, lay the result into the view,
+        // and write it back.
+        const merged = mergeText(baseline.current, pageText.current, content);
+        disk.current = content;
+        baseline.current = merged;
+        pageText.current = merged;
+        setDirty(merged !== content);
+        applyText(merged);
+        clearTimeout(saveTimer.current);
+        write(merged);
       }).catch((problem: Error) => { if (alive) setReadError(problem.message); });
     };
     const stop = watch(context, file.machine, holder, [file.path], () => read(true));
     read();
     return () => { alive = false; stop(); };
-  }, [context, holder, refreshes, hold]);
-  // The refresh asks for the file again and keeps what has not been written back, saying so where the two have parted. The
-  // load drops that draft first, since the read that answers it puts back the draft it finds, and so draws the file's own
-  // text.
-  const reload = (keep: boolean) => {
-    if (!keep) hold(undefined);
-    setConflict(undefined);
-    setRefreshes((count) => count + 1);
-  };
-  // Both answers hand the keyboard back to the text: the row goes away with it, and the load's read builds the view again.
-  const keep = () => {
-    setConflict('mark');
-    setChoosing(false);
-    if (main.current) EditorView.findFromDOM(main.current)?.focus();
-  };
-  const load = () => { setChoosing(false); reload(false); };
-  // The keyboard's way in: `<C-g>` lands on the answer and Enter presses it, so no single stray press gives anything up.
-  // With no conflict to answer it lands on the header's load, where Enter does the same.
-  useEffect(() => {
-    const element = shell.current;
-    if (!element) return;
-    return bindKeys(element, [{ keys: '<C-g>', insert: true, run: () => {
-      if (conflict === undefined) { element.querySelector<HTMLButtonElement>('.editor-load')?.focus(); return; }
-      if (conflict === 'said') { row.current?.querySelector('button')?.focus(); return; }
-      asked.current = true;
-      setConflict('said');
-    } }], { ignore: (event) => event.defaultPrevented || writing(event.target) });
-  }, [conflict]);
-  useEffect(() => {
-    if (!asked.current) return;
-    asked.current = false;
-    row.current?.querySelector('button')?.focus();
-  }, [conflict]);
+  }, [context, holder, refreshes]);
+  // Leaving the file writes back what the typing left, so nothing is dropped on the way out. This runs only when the page
+  // goes away, not when a refresh re-reads: a refresh merges the pending buffer instead.
+  useEffect(() => () => {
+    clearTimeout(saveTimer.current);
+    if (loaded.current) write(pageText.current);
+  }, []);
   const editing: Editing = {
     onDoc(edited) {
       pageText.current = edited;
-      const same = edited === baseline.current;
-      hold(same ? undefined : edited);
-      // Typed back into the text the file held: there is nothing left to choose between.
-      if (same) setConflict(undefined);
-    },
-    save() {
-      const whole = pageText.current;
-      void context.ui.request('write', { machine: file.machine, path: file.path, text: whole })
-        .then(() => {
-          writes.current += 1;
-          sent.current = whole;
-          baseline.current = whole;
-          // The write is this page's answer to a conflict: the file holds what the page holds now.
-          setConflict(undefined);
-          // What was typed while the write was on its way is not in the file, so the mark stays up for it, held against
-          // the text just written.
-          hold(pageText.current === whole ? undefined : pageText.current);
-          report('');
-        })
-        .catch((problem: Error) => report(problem.message));
+      setDirty(edited !== disk.current);
+      scheduleSave();
     },
   };
-  return <Shell ref={shell}>
+  return <Shell>
     <Navigation context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} dirty={dirty}
-      conflict={conflict !== undefined} refresh={() => reload(true)} load={load} reveal={() => { asked.current = true; setConflict('said'); }} report={report} />
-    {conflict === 'said' && <div className="editor-conflict" role="group" aria-label="磁盘冲突" ref={row}
-      onFocus={() => setChoosing(true)}
-      onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setChoosing(false); }}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') { event.preventDefault(); keep(); return; }
-        const step = ['j', 'ArrowDown', 'ArrowRight'].includes(event.key) ? 1
-          : ['k', 'ArrowUp', 'ArrowLeft'].includes(event.key) ? -1 : 0;
-        if (!step) return;
-        event.preventDefault();
-        const acts = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button')];
-        const here = acts.findIndex((act) => act === document.activeElement);
-        acts[(here + step + acts.length) % acts.length]?.focus();
-      }}>
-      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.4 15.2 14H.8L8 2.4Z M8 6.6v3.2 M8 11.8v.2" /></svg>
-      <span className="editor-conflict-text" role="alert">磁盘上的文件变了，和这里没写回的改动冲突。
-        <span className="editor-conflict-keys">{choosing
-          ? <><kbd>j</kbd><kbd>k</kbd> 切换 · <kbd>⏎</kbd> 确认 · <kbd>Esc</kbd> 保留改动</>
-          : <><kbd>⌃G</kbd> 挑一个 · <kbd>⏎</kbd> 确认</>}</span>
-      </span>
-      <button type="button" className="editor-conflict-act primary" title="丢掉没写回的改动，读回磁盘（⌃G 后回车）" onClick={load}>载入磁盘的那份</button>
-      <button type="button" className="editor-conflict-act" title="收起这条提示，接着改（⌃G 后 j/k 选，或 Esc）" onClick={keep}>留着我的改动</button>
-    </div>}
+      refresh={() => setRefreshes((count) => count + 1)} report={report} />
     <div className="editor-main" ref={main}>
       <Notice text={notice} />
       {readError ? <div className="file-message" role="alert">{readError}</div>
@@ -944,12 +897,11 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       // A file left at its top is where a fresh open puts it, so there is no offset worth keeping.
       if (entry.top === 0) delete entry.top;
     };
-    // The keys this page answers itself, in the SDK's keymap: `<C-s>` writes the file on show back to its disk, `<C-f>`
-    // opens the search picker and `<C-o>`/`<C-i>` walk the tab's history. `insert` is what lets them answer while a field
-    // holds the keys, which is where the vim layer would otherwise take `<C-o>`, `<C-i>` and `<C-f>` for itself; the page
-    // they are bound to is the tab that has the keyboard, so no other tab answers them.
+    // The keys this page answers itself, in the SDK's keymap: `<C-f>` opens the search picker and `<C-o>`/`<C-i>` walk the
+    // tab's history. `insert` is what lets them answer while a field holds the keys, which is where the vim layer would
+    // otherwise take `<C-o>`, `<C-i>` and `<C-f>` for itself; the page they are bound to is the tab that has the keyboard,
+    // so no other tab answers them. The file is written back on its own, so there is no save key.
     const keys = [
-      { keys: '<C-s>', insert: true, run: () => { const view = EditorView.findFromDOM(container); if (view) pageKeys.get(view)?.save(); } },
       { keys: '<C-f>', insert: true, run: () => { if (showing()) openSearch(); } },
       { keys: '<C-o>', insert: true, run: () => { if (canStep(-1)) step(-1); } },
       { keys: '<C-i>', insert: true, run: () => { if (canStep(1)) step(1); } },
@@ -1026,7 +978,6 @@ export async function mount(_container: HTMLElement, context: UiContext) {
     saveHistoryNow(context);
     histories.clear();
     pages.clear();
-    drafts.clear();
     services?.dispose();
     services = undefined;
   };
