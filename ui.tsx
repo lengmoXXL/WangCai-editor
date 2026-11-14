@@ -63,7 +63,7 @@ const pageOf = (element: HTMLElement | null) => element?.closest<HTMLElement>('[
 const viewOf = (cm: unknown) => (cm as { cm6?: EditorView }).cm6;
 
 // A key the vim layer answers asks the view it was typed into.
-const pageKeys = new Map<EditorView, { jump: (act: LocationFeature) => void }>();
+const pageKeys = new Map<EditorView, { jump: (act: LocationFeature) => void; say: (text: string) => void }>();
 
 // The keys the normal mode answers by our own actions: the key, and the question it asks the view, in the order the menu
 // offers those questions.
@@ -75,7 +75,7 @@ const vimCommands: [keys: string, act: LocationFeature][] = [
 ];
 
 // The keys are defined once for the whole window, not per view, since the vim layer is one state shared by every view.
-// `:w` and `<C-s>` are left to the library, which writes nowhere: the file is written back on its own.
+// `<C-s>` is left to the library, which writes nowhere: the file is written back on its own.
 for (const [keys, act] of vimCommands) {
   const name = `wangcai-${act}`;
   Vim.defineAction(name, (cm) => {
@@ -84,6 +84,11 @@ for (const [keys, act] of vimCommands) {
   });
   Vim.mapCommand(keys, 'action', name, {}, { context: 'normal' });
 }
+// `:w` says the file writes itself back rather than saving, so the key is not mistaken for a write that does nothing.
+Vim.defineEx('write', 'w', (cm) => {
+  const view = viewOf(cm);
+  if (view) pageKeys.get(view)?.say('文件自动写回，无需 :w');
+});
 
 // A file this plugin reads as no language is nobody's to serve.
 const serviceFor = (file: FileClick): OpenOptions | undefined => {
@@ -267,7 +272,7 @@ function Overlay({ className, role, label, at, onClose, children }: {
   </>;
 }
 
-type Editing = { onDoc: (text: string) => void };
+type Editing = { onDoc: (text: string) => void; say: (text: string) => void };
 
 function EditorPage({ file, text, remember, peeking, navigate, editing }: { file: HistoryEntry; text: { body: string }; remember: Remember; peeking: boolean; navigate: Navigate; editing: Editing }) {
   const element = useRef<HTMLDivElement>(null);
@@ -336,7 +341,7 @@ function EditorPage({ file, text, remember, peeking, navigate, editing }: { file
     view.scrollDOM.addEventListener('scroll', scrolled, { passive: true });
     // The keys are handed over as the view is built, so a key pressed as soon as the file appears finds its answer instead of
     // waiting for a later render.
-    pageKeys.set(view, { jump: (act) => void goAt(act, placeOf(view)) });
+    pageKeys.set(view, { jump: (act) => void goAt(act, placeOf(view)), say: (text) => handlers.current.say(text) });
     return () => {
       pageKeys.delete(view);
       view.scrollDOM.removeEventListener('scroll', scrolled);
@@ -581,6 +586,7 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
       setDirty(edited !== disk.current);
       scheduleSave();
     },
+    say: report,
   };
   return <Shell>
     <Navigation context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} dirty={dirty}

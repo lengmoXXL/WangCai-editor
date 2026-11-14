@@ -52,6 +52,8 @@ test(':w and <C-s> no longer write the file', { timeout: 120000 }, () => withWin
   assert.equal(readFileSync(file, 'utf8'), keptBody);
   await writeWithEx(page);
   assert.equal(readFileSync(file, 'utf8'), keptBody);
+  // :w answers with a note that the file writes itself back, rather than writing.
+  await alert(shownPanel(page)).filter({ hasText: '文件自动写回' }).waitFor();
   // The buffer is written back on its own regardless.
   await until(() => readFileSync(file, 'utf8') === writtenBody);
   assert.deepEqual(errors, []);
