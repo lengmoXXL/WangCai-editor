@@ -1,8 +1,16 @@
 import { forceParsing, syntaxTree } from '@codemirror/language';
-import { Prec, StateField, type EditorState, type Range } from '@codemirror/state';
+import { Compartment, Facet, Prec, StateField, type EditorState, type Range } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view';
 import { getCM } from '@replit/codemirror-vim';
 
+// The channel a local image's bytes come through: the page cannot reach the machine's disk for an <img> of its own, so
+// each view is handed a resolver turning the path a note names into an address the picture can load.
+export type PreviewImageSource = (url: string) => Promise<string>;
+export const previewImageSource = Facet.define<PreviewImageSource>();
+// A picture's bytes arrive after its widget is laid out and change its height. The view only re-reads line heights when
+// its configuration changes, so an image lands by reconfiguring this empty compartment: that forces the measure that
+// keeps the gutter and the scroll aligned with the picture.
+export const imageMeasure = new Compartment();
 // A horizontal rule is drawn as a line of its own rather than the dashes that name it.
 class RuleWidget extends WidgetType {
   toDOM() {
@@ -14,28 +22,46 @@ class RuleWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
-// An image is shown where its markdown sits: a remote one loads, a local one is named on a card, since the text channel
-// this editor reads through carries no bytes for it.
+// An image is shown where its markdown sits: a remote one loads straight from its address, a local one asks the channel
+// for its bytes and draws them, a named card standing in until they arrive — or for good when they cannot be had.
 class ImageWidget extends WidgetType {
-  constructor(readonly alt: string, readonly url: string) { super(); }
-  toDOM() {
+  constructor(readonly alt: string, readonly url: string, readonly source?: PreviewImageSource) { super(); }
+  toDOM(view: EditorView) {
     const wrap = document.createElement('span');
     wrap.className = 'cm-md-image';
-    if (/^https?:\/\//i.test(this.url)) {
+    const picture = (src: string) => {
       const img = document.createElement('img');
-      img.src = this.url;
       img.alt = this.alt;
       img.loading = 'lazy';
-      wrap.appendChild(img);
-    } else {
-      wrap.classList.add('cm-md-image-local');
-      const label = document.createElement('span');
-      label.className = 'cm-md-image-label';
-      label.textContent = '图片';
-      const name = document.createElement('span');
-      name.className = 'cm-md-image-name';
-      name.textContent = this.alt || this.url;
-      wrap.append(label, name);
+      const grown = () => view.dispatch({ effects: imageMeasure.reconfigure(EditorView.theme({ '.cm-md-image': {} })) });
+      img.addEventListener('load', grown);
+      img.src = src;
+      return img;
+    };
+    if (/^https?:\/\//i.test(this.url)) {
+      wrap.appendChild(picture(this.url));
+      return wrap;
+    }
+    wrap.classList.add('cm-md-image-local');
+    const label = document.createElement('span');
+    label.className = 'cm-md-image-label';
+    label.textContent = '图片';
+    const name = document.createElement('span');
+    name.className = 'cm-md-image-name';
+    name.textContent = this.alt || this.url;
+    wrap.append(label, name);
+    if (this.source) {
+      this.source(this.url)
+        .then((src) => {
+          if (!wrap.isConnected) return;
+          wrap.replaceChildren(picture(src));
+          wrap.classList.remove('cm-md-image-local');
+        })
+        .catch(() => {
+          if (!wrap.isConnected) return;
+          wrap.classList.add('cm-md-image-missing');
+          wrap.title = '无法加载图片';
+        });
     }
     return wrap;
   }
@@ -145,6 +171,7 @@ const headingSize = /^ATXHeading([1-6])$/;
 // left visible, the way a live preview lets the line being edited be edited as text.
 function render(state: EditorState): DecorationSet {
   const doc = state.doc;
+  const loadImage = state.facet(previewImageSource)[0];
   const active = new Set<number>();
   for (const range of state.selection.ranges) {
     const from = doc.lineAt(range.from).number;
@@ -215,7 +242,7 @@ function render(state: EditorState): DecorationSet {
         const text = doc.sliceString(from, to);
         const match = /^!\[([^\]]*)\]\(([^)\s]+)/.exec(text);
         if (match && !revealed(from, to)) {
-          ranges.push({ from, to, value: Decoration.replace({ widget: new ImageWidget(match[1], match[2]) }) });
+          ranges.push({ from, to, value: Decoration.replace({ widget: new ImageWidget(match[1], match[2], loadImage) }) });
         }
         return false;
       }

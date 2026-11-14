@@ -11,9 +11,9 @@ import { bindKeys } from '@lengmoxxl/sdk/keys';
 import type { TabRecord, UiContext } from '@lengmoxxl/sdk/channel';
 import { LanguageServices, type FileSymbol, type LocationFeature, type ServiceStatus, type Target } from './lsp';
 import { languageOf, modeFor } from './mode';
-import { markdownPreview, markdownPreviewKeys, markdownPreviewParse } from './preview';
+import { markdownPreview, markdownPreviewKeys, markdownPreviewParse, previewImageSource, imageMeasure, type PreviewImageSource } from './preview';
 import { editorTheme } from './theme';
-import { machineKey, type FileClick, type Font, type History, type HistoryEntry, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
+import { machineKey, type FileClick, type Font, type History, type HistoryEntry, type ImageBytes, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
 import './style.css';
 
 // What the tab is called, and the id the window remembers it by when it opens it again.
@@ -289,9 +289,39 @@ const keptShare = () => {
   const kept = Number(localStorage.getItem(widthKey));
   return kept > 0 && kept <= 1 ? kept : 1;
 };
-const previewExtensions = [markdownPreview, markdownPreviewKeys, markdownPreviewParse, EditorView.lineWrapping];
 
-function EditorPage({ file, text, remember, peeking, navigate, editing, preview }: { file: HistoryEntry; text: { body: string }; remember: Remember; peeking: boolean; navigate: Navigate; editing: Editing; preview: boolean }) {
+// The bytes of a local image, cached by machine and path so a redraw does not ask again: the resolver turns the path a
+// note names into a data address the picture loads, resolving it against the note's own directory.
+const imageCache = new Map<string, Promise<string>>();
+const resolveImage = (base: string, url: string) => {
+  const parts = (url.startsWith('/') ? url : `${base}/${url}`).split('/');
+  const out: string[] = [];
+  for (const part of parts) {
+    if (!part || part === '.') continue;
+    if (part === '..') out.pop();
+    else out.push(part);
+  }
+  return `/${out.join('/')}`;
+};
+const imageSourceFor = (context: UiContext, file: FileClick): PreviewImageSource => {
+  const base = directoryOf(file);
+  return async (url) => {
+    const path = decodeURIComponent(url.split(/[?#]/)[0]);
+    const abs = resolveImage(base, path);
+    const key = `${machineKey(file.machine)}|${abs}`;
+    let pending = imageCache.get(key);
+    if (!pending) {
+      pending = context.ui.request<ImageBytes>('read-image', { machine: file.machine, path: abs })
+        .then(({ mime, data }) => `data:${mime};base64,${data}`);
+      imageCache.set(key, pending);
+      pending.catch(() => imageCache.delete(key));
+    }
+    return pending;
+  };
+};
+const previewExtensions = (loadImage: PreviewImageSource) => [markdownPreview, markdownPreviewKeys, markdownPreviewParse, EditorView.lineWrapping, previewImageSource.of(loadImage), imageMeasure.of(EditorView.theme({ '.cm-md-image': {} }))];
+
+function EditorPage({ file, text, remember, peeking, navigate, editing, preview, loadImage }: { file: HistoryEntry; text: { body: string }; remember: Remember; peeking: boolean; navigate: Navigate; editing: Editing; preview: boolean; loadImage: PreviewImageSource }) {
   const element = useRef<HTMLDivElement>(null);
   const row = useRef<HTMLDivElement>(null);
   const divider = useRef<HTMLDivElement>(null);
@@ -349,7 +379,7 @@ function EditorPage({ file, text, remember, peeking, navigate, editing, preview 
           ...chrome,
           modeFor(file.path),
           server.of(link),
-          previewComp.of(preview ? previewExtensions : []),
+          previewComp.of(preview ? previewExtensions(loadImage) : []),
           EditorView.updateListener.of((update) => {
             if (update.selectionSet) remember(shown.current, positionOf(update.view));
             if (update.docChanged) handlers.current.onDoc(update.state.doc.toString());
@@ -379,7 +409,7 @@ function EditorPage({ file, text, remember, peeking, navigate, editing, preview 
   }, [server, link]);
   useEffect(() => {
     const view = control.current;
-    if (view) view.dispatch({ effects: previewComp.reconfigure(preview ? previewExtensions : []) });
+    if (view) view.dispatch({ effects: previewComp.reconfigure(preview ? previewExtensions(loadImage) : []) });
   }, [previewComp, preview]);
   // Where the view sits: the caret goes on the line the entry names, the scroll is put back at the offset the file was
   // left at, or else centred on that line, and an entry that names no place is the file at its top. A view built again
@@ -667,6 +697,7 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
     },
     say: report,
   };
+  const loadImage = useMemo(() => imageSourceFor(context, file), [context, file.machine, file.path]);
   return <Shell>
     <Navigation context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} dirty={dirty}
       markdown={markdown} preview={preview} togglePreview={() => setPreview((on) => !on)}
@@ -675,7 +706,7 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
       <Notice text={notice} />
       {readError ? <div className="file-message" role="alert">{readError}</div>
         : text === undefined ? <div className="file-message">正在读取…</div>
-        : <EditorPage file={file} text={text} remember={remember} peeking={peeking} navigate={navigate} editing={editing} preview={markdown && preview} />}
+        : <EditorPage file={file} text={text} remember={remember} peeking={peeking} navigate={navigate} editing={editing} preview={markdown && preview} loadImage={loadImage} />}
     </div>
   </Shell>;
 }

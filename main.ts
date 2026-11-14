@@ -2,7 +2,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import type { MachineConnection, Process } from '@lengmoxxl/sdk';
 import type { MainContext } from '@lengmoxxl/sdk/channel';
-import { machineKey, type FileClick, type History, type LspClose, type LspData, type LspSession, type OpenOptions, type SearchHit, type Settings } from './shared';
+import { machineKey, type FileClick, type History, type ImageBytes, type LspClose, type LspData, type LspSession, type OpenOptions, type SearchHit, type Settings } from './shared';
 
 // The keys this plugin brings: `<leader>e` shows the view wherever the keys are, while the other two name no `global`
 // and so answer only while this page holds them — they go out as events, since the file they act on is the one the page
@@ -203,6 +203,21 @@ export function activate(context: MainContext) {
       return text;
     })));
 
+  // An image the preview draws: its bytes cross as base64 with the type its extension claims, since the page cannot read
+  // the machine's disk for an <img> of its own. A ceiling keeps one huge file from crossing the channel whole.
+  const imageTypes: Record<string, string> = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    svg: 'image/svg+xml', bmp: 'image/bmp', avif: 'image/avif', ico: 'image/x-icon',
+  };
+  const imageCeiling = 10 * 1024 * 1024;
+  handlers.push(context.ui.handle('read-image', ({ machine, path }: { machine: FileClick['machine']; path: string }): Promise<ImageBytes> =>
+    withConnection(machine, async (connection) => {
+      const mime = imageTypes[path.slice(path.lastIndexOf('.') + 1).toLowerCase()];
+      if (!mime) throw new Error('暂不支持该图片格式');
+      const bytes = await connection.fs.readFile(path);
+      if (bytes.byteLength > imageCeiling) throw new Error('图片过大，无法预览');
+      return { mime, data: Buffer.from(bytes).toString('base64') };
+    })));
   // What the page writes back: the text it holds, whole, over the file it was read from.
   handlers.push(context.ui.handle('write', ({ machine, path, text }: { machine: FileClick['machine']; path: string; text: string }) =>
     withConnection(machine, (connection) => connection.fs.writeFile(path, Buffer.from(text, 'utf8')))));

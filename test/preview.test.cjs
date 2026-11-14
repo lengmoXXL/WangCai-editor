@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
+const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { lists, showWritten, shownPanel, drawnLines, lineBoxes, cursorAt } = require('./editor-ui.cjs');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
@@ -232,5 +232,68 @@ test('a page scrolled past the parsed region renders without a click', { timeout
   // Scroll to the bottom without touching the editor; the far heading must render on its own.
   await shownPanel(page).locator('.cm-scroller').evaluate((el) => { el.scrollTop = el.scrollHeight; });
   await until(async () => (await md(page, 'cm-md-h2').allInnerTexts()).some((t) => t.includes('Section 6000')), { timeout: 30000 });
+  assert.deepEqual(errors, []);
+}));
+
+// A small solid-colour PNG built byte by byte, so a case has a real picture to load rather than a broken path.
+const { deflateSync, crc32 } = require('node:zlib');
+const pngOf = (w, h, rgb) => {
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const sum = Buffer.alloc(4); sum.writeUInt32BE(crc32(body) >>> 0);
+    return Buffer.concat([len, body, sum]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const raw = Buffer.alloc(h * (1 + w * 3));
+  for (let y = 0; y < h; y++) {
+    const row = y * (1 + w * 3);
+    for (let x = 0; x < w; x++) { const i = row + 1 + x * 3; raw[i] = rgb[0]; raw[i + 1] = rgb[1]; raw[i + 2] = rgb[2]; }
+  }
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0)),
+  ]);
+};
+const loadedPicture = (page) => shownPanel(page).locator('.cm-md-image img').first()
+  .evaluate((el) => el.complete && el.naturalWidth > 0 && el.src.startsWith('data:image/png'));
+
+test('a local image renders as a loaded picture, and a missing one keeps its card', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-image', lists, async ({ home, page, errors }) => {
+  writeFileSync(join(home, 'pic.png'), pngOf(24, 16, [214, 66, 112]));
+  const file = join(home, 'image.md');
+  await showWritten(page, file, '# Pic\n\n![a picture](./pic.png)\n\n![gone](./missing.png)\n\n![bad](./100%.png)\n\ntail\n', 'tail');
+  // The present image's bytes come through the channel and draw; the missing and the malformed keep the named card.
+  await until(async () => (await shownPanel(page).locator('.cm-md-image img').count()) > 0 && loadedPicture(page), { timeout: 30000 });
+  await until(async () => (await md(page, 'cm-md-image-missing').count()) === 2, { timeout: 30000 });
+  // The tall picture must not leave the line-number gutter drifted from the content below it.
+  const drift = await page.evaluate(() => {
+    const tops = new Map([...document.querySelectorAll('.cm-gutterElement')].map((el) => [el.textContent.trim(), el.getBoundingClientRect().top]));
+    let max = 0;
+    document.querySelectorAll('.cm-content .cm-line').forEach((el, i) => {
+      const top = tops.get(String(i + 1));
+      if (top !== undefined) max = Math.max(max, Math.abs(top - el.getBoundingClientRect().top));
+    });
+    return max;
+  });
+  assert.ok(drift < 3, `gutter drifted ${drift}px from the content`);
+  // The caret onto the picture's line brings its markdown back as text.
+  await lineBoxes(shownPanel(page)).nth(2).click();
+  await until(async () => (await drawnLines(page))[2] === '![a picture](./pic.png)');
+  assert.deepEqual(errors, []);
+}));
+
+test('an image far down a long page renders on scroll without a click', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-image-scroll', lists, async ({ home, page, errors }) => {
+  writeFileSync(join(home, 'deep.png'), pngOf(24, 16, [80, 140, 220]));
+  const file = join(home, 'deep.md');
+  const body = Array.from({ length: 6000 }, (_, k) => `## Section ${k + 1}\n\nParagraph ${k + 1} with **bold** text.\n`).join('\n') + '\n![deep picture](./deep.png)\n';
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'scheduling', { value: { isInputPending: () => true }, configurable: true });
+  });
+  await showWritten(page, file, body, 'Section 1');
+  await until(async () => (await md(page, 'cm-md-h2').count()) > 0);
+  // Scroll to the picture without touching the editor: it must parse, fetch its bytes and draw on its own.
+  await shownPanel(page).locator('.cm-scroller').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await until(async () => (await shownPanel(page).locator('.cm-md-image img').count()) > 0 && loadedPicture(page), { timeout: 30000 });
   assert.deepEqual(errors, []);
 }));

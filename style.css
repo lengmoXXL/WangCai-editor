@@ -46,10 +46,13 @@
 .cm-md-codeblock-bottom { border-bottom: 1px solid var(--wc-border); border-radius: 0 0 4px 4px; padding-bottom: 6px; }
 .cm-md-code-lang { float: right; color: var(--wc-muted); font-size: 0.85em; }
 .cm-md-rule { height: 0; border-top: 1px solid var(--wc-border); margin: 6px 0; }
-.cm-md-image img { max-width: 100%; border-radius: 5px; }
+.cm-md-image { display: inline-block; max-width: 100%; vertical-align: middle; }
+.cm-md-image img { display: block; max-width: 100%; border-radius: 5px; border: 1px solid var(--wc-border); }
 .cm-md-image-local { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--wc-border); border-left: 2px solid var(--wc-magenta); border-radius: 4px; background: var(--wc-overlay); }
 .cm-md-image-label { color: var(--wc-magenta); font-weight: 600; }
 .cm-md-image-name { color: var(--wc-muted); }
+.cm-md-image-missing { opacity: 0.6; }
+.cm-md-image-missing .cm-md-image-name { text-decoration: line-through; }
 .cm-md-task { accent-color: var(--wc-accent); width: 13px; height: 13px; margin: 0 5px 0 0; vertical-align: middle; cursor: pointer; }
 .cm-md-table { border-collapse: collapse; margin: 6px 0; color: var(--wc-foreground); }
 .cm-md-table th, .cm-md-table td { padding: 4px 8px; border: 1px solid var(--wc-border); }

@@ -17,6 +17,10 @@ export type LspExit = { session: string; code?: number };
 // A search's rows: a match in a file's text, at the line and column the row jumps to.
 export type SearchHit = { path: string; line: number; column: number; text: string };
 
+// An image the preview draws: the type its name claims and its bytes as base64, since the page cannot reach the
+// machine's disk for an <img> of its own and every payload on the channel is JSON.
+export type ImageBytes = { mime: string; data: string };
+
 // The identity of a machine: the id, plus the host that tells two machines with one id apart.
 export const machineKey = (machine: FileClick['machine']) => `${machine.id}|${machine.host ?? ''}`;
 
