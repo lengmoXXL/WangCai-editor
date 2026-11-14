@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { lspDot, shownPanel } = require('./editor-ui.cjs');
+const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { openRust, pids, serverFor, unexpected } = require('./lsp-fixtures.cjs');
 
 // The command this case runs as a server: it comes up, takes a write, and dies again. The probe below looks for that same

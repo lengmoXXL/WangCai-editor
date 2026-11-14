@@ -2,8 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { codeShowing, editorTab, lists, shownPanel, shows, showWritten, workspaceTabs } = require('./editor-ui.cjs');
+const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 // The file both cases open, and the text it is opened with.
 const sampleFile = 'sample.ts';

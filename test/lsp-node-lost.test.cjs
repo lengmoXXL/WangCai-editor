@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { until, wangcaiApp, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { lists, refreshButton, showAfter } = require('./editor-ui.cjs');
+const { until, wangcaiApp, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { languageServers, openTs, pids } = require('./lsp-fixtures.cjs');
 
 // The agent a window talks to, whose going away takes every server it spawned with it.

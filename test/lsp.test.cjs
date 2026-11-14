@@ -2,8 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { writeFileSync } = require('node:fs');
 const { basename, join } = require('node:path');
-const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { alert, backButton, closeWorkspace, codeShowing, codeSurface, cursorAt, diagnostics, dismiss, dismissSearch, editorFocused, hoverTips, landed, landedOn, lineBoxes, lists, lspDetail, lspDot, noServerReason, placeFileName, placeList, placeRows, placeText, queryApplied, search, searchInput, searchMarks, searchPanel, searchRowEntries, searchRowNamed, showFile, shownPanel, showWritten, storedHistory, submitSearch, typeInto, workspaceTabs } = require('./editor-ui.cjs');
+const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { areaNameAt, flatBody, flatNames, flatServer, languageServers, openRust, openTs, serverFor, treeBody, treeNames, treeServer, messageServer, serverSaid } = require('./lsp-fixtures.cjs');
 
 // The name the shapes file a case writes is imported by, so that the specifier and the path agree.

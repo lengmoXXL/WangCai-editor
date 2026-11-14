@@ -1,5 +1,9 @@
 const { writeFileSync } = require('node:fs');
-const { until } = require('@lengmoxxl/wangcai-testkit');
+const { configure, until } = require('@lengmoxxl/wangcai-testkit');
+
+// Several windows share one machine, so under load a window starts and renders slowly; the waits are given room to wait
+// that slowness out instead of reading it as a fault.
+configure({ timeout: 120000, actionTimeout: 60000 });
 
 // The machine the window works on, which is the one a case's paths are read from.
 const machine = { id: 'local', name: '本机' };

@@ -34,7 +34,7 @@
   },
   "devDependencies": {
     "@lengmoxxl/sdk": "^0.1.50",
-    "@lengmoxxl/wangcai-testkit": "^0.1.9",
+    "@lengmoxxl/wangcai-testkit": "^0.1.12",
     "@types/node": "^24.19.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

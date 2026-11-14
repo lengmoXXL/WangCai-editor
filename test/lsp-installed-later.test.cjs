@@ -2,8 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { chmodSync, mkdirSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { lspDot, noServerReason, shownPanel } = require('./editor-ui.cjs');
+const { withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { openRust, serverFor, unexpected } = require('./lsp-fixtures.cjs');
 
 // The program this case installs after the window has already looked for it, in the directory a login shell puts first:

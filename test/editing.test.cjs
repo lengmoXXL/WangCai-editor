@@ -2,8 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { alert, backButton, codeShowing, dirtyMark, drawnLines, lists, showAfter, showFile, shownPanel, showWritten, typeInto } = require('./editor-ui.cjs');
+const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 // The keys that used to write the file, and which now do nothing: the buffer is written back on its own.
 const saveKey = 'Control+s';

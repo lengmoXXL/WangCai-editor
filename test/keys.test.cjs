@@ -1,8 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { join } = require('node:path');
-const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { drawnLines, editorFocused, lineBoxes, lists, shownPanel, showWritten } = require('./editor-ui.cjs');
+const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 const answerLine = 'export const answer = 42;';
 const answerBody = `${answerLine}\n`;

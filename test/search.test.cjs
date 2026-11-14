@@ -2,8 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { mkdirSync, writeFileSync } = require('node:fs');
 const { basename, join } = require('node:path');
-const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { clickFile, codeShowing, dismissSearch, editorFocused, fileSearchEmpty, landedOn, lists, machine, openSearch, queryApplied, search, searchInput, searchMarks, searchPanel, searchRow, searchRowEntries, searchRows, shownPanel, shows, showWritten, storedHistory, submitSearch, waitForPath } = require('./editor-ui.cjs');
+const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 const rowLimit = 200;
 
