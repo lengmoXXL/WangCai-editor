@@ -11,7 +11,7 @@ import { bindKeys } from '@lengmoxxl/sdk/keys';
 import type { TabRecord, UiContext } from '@lengmoxxl/sdk/channel';
 import { LanguageServices, type FileSymbol, type LocationFeature, type ServiceStatus, type Target } from './lsp';
 import { languageOf, modeFor } from './mode';
-import { markdownPreview, markdownPreviewKeys } from './preview';
+import { markdownPreview, markdownPreviewKeys, markdownPreviewParse } from './preview';
 import { editorTheme } from './theme';
 import { machineKey, type FileClick, type Font, type History, type HistoryEntry, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
 import './style.css';
@@ -289,7 +289,7 @@ const keptShare = () => {
   const kept = Number(localStorage.getItem(widthKey));
   return kept > 0 && kept <= 1 ? kept : 1;
 };
-const previewExtensions = [markdownPreview, markdownPreviewKeys, EditorView.lineWrapping];
+const previewExtensions = [markdownPreview, markdownPreviewKeys, markdownPreviewParse, EditorView.lineWrapping];
 
 function EditorPage({ file, text, remember, peeking, navigate, editing, preview }: { file: HistoryEntry; text: { body: string }; remember: Remember; peeking: boolean; navigate: Navigate; editing: Editing; preview: boolean }) {
   const element = useRef<HTMLDivElement>(null);

@@ -216,3 +216,21 @@ test('k leaving a code block steps line by line past a table above it', { timeou
   await until(async () => (await md(page, 'cm-md-table').count()) === 1);
   assert.deepEqual(errors, []);
 }));
+
+// A scroll far past the parsed region must still render on its own. Pending input stalls the idle parser, and the
+// page is long enough that the odd transaction's incidental parse cannot reach the end either, so only the preview's
+// own parse drive can decorate the far lines; no click is ever given to wake it.
+const scrollBody = Array.from({ length: 6000 }, (_, k) => `## Section ${k + 1}\n\nParagraph ${k + 1} with **bold ${k + 1}** and a longer line so the parser falls behind the scroll.\n`).join('\n');
+
+test('a page scrolled past the parsed region renders without a click', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-scroll', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'scroll.md');
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'scheduling', { value: { isInputPending: () => true }, configurable: true });
+  });
+  await showWritten(page, file, scrollBody, 'Section 1');
+  await until(async () => (await md(page, 'cm-md-h2').count()) > 0);
+  // Scroll to the bottom without touching the editor; the far heading must render on its own.
+  await shownPanel(page).locator('.cm-scroller').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await until(async () => (await md(page, 'cm-md-h2').allInnerTexts()).some((t) => t.includes('Section 6000')), { timeout: 30000 });
+  assert.deepEqual(errors, []);
+}));

@@ -1,6 +1,6 @@
-import { syntaxTree } from '@codemirror/language';
+import { forceParsing, syntaxTree } from '@codemirror/language';
 import { Prec, StateField, type EditorState, type Range } from '@codemirror/state';
-import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
+import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view';
 import { getCM } from '@replit/codemirror-vim';
 
 // A horizontal rule is drawn as a line of its own rather than the dashes that name it.
@@ -289,6 +289,27 @@ export const markdownPreview = StateField.define<DecorationSet>({
   create: (state) => render(state),
   update: (value, tr) => (tr.docChanged || !tr.state.selection.eq(tr.startState.selection) || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? render(tr.state) : value),
   provide: (field) => EditorView.decorations.from(field),
+});
+
+// The idle parser only runs while it has focus, budget and no pending input, so a page can sit unrendered until a
+// click wakes it. Drive the parse here instead: whenever the viewport is not covered, parse forward a bounded slice
+// each frame until it is, so the visible lines render on their own, viewport first, without needing a click.
+export const markdownPreviewParse = ViewPlugin.fromClass(class {
+  private frame = 0;
+  private dead = false;
+  constructor(private view: EditorView) { this.schedule(); }
+  update() { this.schedule(); }
+  private schedule() {
+    const { view } = this;
+    if (this.dead || this.frame || syntaxTree(view.state).length >= view.viewport.to) return;
+    this.frame = requestAnimationFrame(() => {
+      this.frame = 0;
+      if (this.dead) return;
+      forceParsing(view, view.viewport.to, 50);
+      this.schedule();
+    });
+  }
+  destroy() { this.dead = true; if (this.frame) cancelAnimationFrame(this.frame); }
 });
 
 // Collapsed table lines have no height for the view's vertical motion to land on, so within a table's neighbourhood j/k
