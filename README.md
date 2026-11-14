@@ -135,6 +135,7 @@ Markdown 文件默认按实时预览打开，像 Obsidian 那样所见即所得�
 | `java` | `jdtls` | `pom.xml` `build.gradle` `build.gradle.kts` `settings.gradle` `settings.gradle.kts` |
 | `python` | `pyright-langserver --stdio`，没有就用 `pylsp` | `pyproject.toml` `setup.py` `requirements.txt` |
 | `shell` | `bash-language-server start` | 无 |
+| `markdown` | `markdown-oxide` | `.obsidian` |
 
 ```ts
 // 写在 editor 那一项的 config 里，上面那个 tabs 写法照旧。

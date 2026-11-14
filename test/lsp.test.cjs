@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { writeFileSync } = require('node:fs');
+const { mkdirSync, writeFileSync } = require('node:fs');
 const { basename, join } = require('node:path');
 const { alert, backButton, closeWorkspace, codeShowing, codeSurface, cursorAt, diagnostics, dismiss, dismissSearch, editorFocused, hoverTips, landed, landedOn, lineBoxes, lists, lspDetail, lspDot, noServerReason, placeFileName, placeList, placeRows, placeText, queryApplied, search, searchInput, searchMarks, searchPanel, searchRowEntries, searchRowNamed, showFile, shownPanel, showWritten, storedHistory, submitSearch, typeInto, workspaceTabs } = require('./editor-ui.cjs');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
@@ -407,5 +407,32 @@ test('a java file is read as java, so the command java names is the one it asks 
   await showWritten(page, join(home, 'Demo.java'), '');
   // The language the file is read as is what picks the entry, so a file read as anything else asks about another command.
   assert.match(await noServerReason(page), new RegExp(missingCommand));
+  assert.deepEqual(errors, []);
+}));
+
+// Markdown is served by markdown-oxide: a wiki link jumps to the note it names, and the headings are the symbols the
+// picker lists, nested under the heading they sit in.
+test('markdown jumps over a link and lists its headings as symbols', { timeout: 120000 }, () => withWindow('wangcai-editor-lsp-markdown', lists, async ({ home, page, errors }) => {
+  // A git root with the notes in separate folders: the server indexes the whole repo, so a link crosses folders.
+  mkdirSync(join(home, '.git'), { recursive: true });
+  mkdirSync(join(home, 'vault'), { recursive: true });
+  const beta = join(home, 'vault', 'Beta.md');
+  writeFileSync(beta, '# Beta\n\ntext\n');
+  mkdirSync(join(home, 'notes'), { recursive: true });
+  const alpha = join(home, 'notes', 'Alpha.md');
+  const linkLine = 'see [[Beta]] here';
+  await showWritten(page, alpha, `# Alpha\n\n${linkLine}\n\n## Sub\n`, 'Alpha');
+  await lspDot(shownPanel(page), 'open').waitFor({ timeout: 60000 });
+  await search(page, '@');
+  await searchRowNamed(page, 'Sub').waitFor({ timeout: 60000 });
+  assert.deepEqual(await searchRowEntries(page), [
+    { text: 'Alpha', depth: 0, holder: undefined },
+    { text: 'Sub', depth: 1, holder: 'Alpha' },
+  ]);
+  await searchRowNamed(page, 'Sub').click();
+  await landedOn(page, alpha, '## Sub');
+  await lineBoxes(shownPanel(page)).nth(2).click();
+  await pressOn(page, linkLine, 'Beta', ...definitionKeys);
+  await landedOn(page, beta, '# Beta');
   assert.deepEqual(errors, []);
 }));

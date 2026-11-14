@@ -89,7 +89,7 @@ class Session {
   private handlers = new Set<(message: string) => void>();
   private frames = new Frames();
 
-  constructor(private context: UiContext, readonly info: LspSession, private changed: () => void) {
+  constructor(private context: UiContext, readonly info: LspSession, private changed: () => void, private logged: (text: string) => void) {
     const transport: Transport = {
       send: (message) => this.send(message),
       subscribe: (handler) => { this.handlers.add(handler); },
@@ -101,7 +101,11 @@ class Session {
       extensions: [serverDiagnostics(), hoverTooltips()],
       // What a server says about itself is the page's notice, which leaves by itself, rather than the client's dialog,
       // which stays up until it is closed.
-      notificationHandlers: { 'window/showMessage': (_client, params) => { this.said(String(params?.message ?? '')); return true; } },
+      notificationHandlers: {
+        'window/showMessage': (_client, params) => { this.said(String(params?.message ?? '')); return true; },
+        // A server's log is the service's own record on the dot, like its stderr, rather than the page console.
+        'window/logMessage': (_client, params) => { this.logged(String(params?.message ?? '')); return true; },
+      },
     }).connect(transport);
     // The handshake is only what the client says about itself: a server that never answers it is still one this window can
     // write to, so what it says is kept for the tooltip and the session stays up.
@@ -256,7 +260,7 @@ export class LanguageServices {
       context.ui.subscribe<LspExit>('lsp-exit', ({ session, code }) => {
         this.bySession.get(session)?.stop(code === undefined ? '语言服务已断开' : `语言服务已退出 (${code})`);
       }),
-      context.ui.subscribe<LspLog>('lsp-log', ({ session, text }) => { if (text) this.logs.set(session, text.split('\n').pop()!); }),
+      context.ui.subscribe<LspLog>('lsp-log', ({ session, text }) => this.rememberLog(session, text)),
     ];
   }
 
@@ -269,6 +273,12 @@ export class LanguageServices {
   // What the dot hears when anything about a session moves.
   private notify() {
     for (const listener of this.listeners) listener();
+  }
+
+  // The last line a server wrote, from its stderr or its log messages alike, is what the dot's detail shows.
+  private rememberLog(session: string, text: string) {
+    if (text) this.logs.set(session, text.split('\n').pop()!);
+    this.notify();
   }
 
   private changed() {
@@ -318,7 +328,7 @@ export class LanguageServices {
     if (!existing || existing.closed) {
       // A new session starts without the old errors, so what the last server wrote goes with it.
       this.logs.delete(info.session);
-      this.bySession.set(info.session, new Session(this.context, info, () => this.changed()));
+      this.bySession.set(info.session, new Session(this.context, info, () => this.changed(), (text) => this.rememberLog(info.session, text)));
     }
     this.byFile.set(key, info.session);
     this.changed();

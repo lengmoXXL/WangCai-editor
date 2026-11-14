@@ -39,6 +39,7 @@ const languageServers: Record<string, LanguageServer> = {
   java: { commands: [['jdtls']], markers: ['pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'] },
   python: { commands: [['pyright-langserver', '--stdio'], ['pylsp']], markers: ['pyproject.toml', 'setup.py', 'requirements.txt'] },
   shell: { commands: [['bash-language-server', 'start']], markers: [] },
+  markdown: { commands: [['markdown-oxide']], markers: ['.obsidian'] },
 };
 
 export function activate(context: MainContext) {
