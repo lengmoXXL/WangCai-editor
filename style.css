@@ -59,6 +59,13 @@
 .cm-md-table th { background: var(--wc-overlay); font-weight: 700; }
 .cm-md-table-hidden { height: 0; min-height: 0; padding: 0; overflow: hidden; font-size: 0; line-height: 0; }
 .cm-md-table-src { display: none; }
+.cm-md-frontmatter-hidden { height: 0; min-height: 0; padding: 0; overflow: hidden; font-size: 0; line-height: 0; }
+.cm-md-frontmatter-src { display: none; }
+.cm-md-frontmatter { display: block; margin: 4px 0; padding: 6px 10px; border: 1px solid var(--wc-border); border-left: 2px solid var(--wc-accent); border-radius: 4px; background: var(--wc-overlay); }
+.cm-md-frontmatter-row { display: flex; gap: 8px; align-items: baseline; padding: 1px 0; }
+.cm-md-frontmatter-key { color: var(--wc-muted); font-weight: 600; flex-shrink: 0; }
+.cm-md-frontmatter-value { color: var(--wc-foreground); }
+.cm-md-frontmatter-item { display: inline-block; padding: 0 6px; margin-right: 4px; border: 1px solid var(--wc-border); border-radius: 3px; color: var(--wc-cyan); }
 /* The box is laid out by the path it holds, so what follows it — the mark of unsaved text — stands beside the file. The floor
    is what lets it give way when the row runs out: a path longer than the space left is cut inside the field rather than
    pushing the buttons out of the row. The field's own floor is wider than the box can get in a narrow panel, so the box

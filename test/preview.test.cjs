@@ -297,3 +297,41 @@ test('an image far down a long page renders on scroll without a click', { timeou
   await until(async () => (await shownPanel(page).locator('.cm-md-image img').count()) > 0 && loadedPicture(page), { timeout: 30000 });
   assert.deepEqual(errors, []);
 }));
+
+test('YAML frontmatter is drawn as a block of properties', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-frontmatter', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'frontmatter.md');
+  await showWritten(page, file, '---\ntags: [papers, distributed-systems]\ntitle: QuePaxa\n---\n\n# Heading\n\nbody text\ntail\n', 'tail');
+  // The caret leaves the frontmatter so its lines collapse and the properties draw.
+  await lineBoxes(shownPanel(page)).nth(8).click();
+  await until(async () => (await md(page, 'cm-md-frontmatter').count()) > 0);
+  const box = md(page, 'cm-md-frontmatter');
+  assert.deepEqual(await box.locator('.cm-md-frontmatter-key').allInnerTexts(), ['tags', 'title']);
+  assert.deepEqual(await box.locator('.cm-md-frontmatter-item').allInnerTexts(), ['papers', 'distributed-systems']);
+  assert.equal(await box.locator('.cm-md-frontmatter-row').nth(1).locator('.cm-md-frontmatter-value').innerText(), 'QuePaxa');
+  assert.ok(await md(page, 'cm-md-h1').count() > 0);
+  assert.deepEqual(errors, []);
+}));
+
+test('k steps up into the collapsed frontmatter and reveals its source; j leaves it again', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-frontmatter-jk', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'fmjk.md');
+  await showWritten(page, file, '---\ntags: [papers]\n---\n\n# Heading\n\ntail\n', 'tail');
+  // The blank line just below the block: the caret there keeps the properties drawn.
+  await lineBoxes(shownPanel(page)).nth(3).click();
+  await until(async () => (await md(page, 'cm-md-frontmatter').count()) > 0);
+  await page.keyboard.press('k');
+  await until(() => cursorAt(page, '---'));
+  await until(async () => (await md(page, 'cm-md-frontmatter').count()) === 0);
+  assert.ok((await drawnLines(page)).some((l) => l.includes('tags: [papers]')));
+  await page.keyboard.press('j');
+  await until(async () => (await md(page, 'cm-md-frontmatter').count()) > 0);
+  assert.deepEqual(errors, []);
+}));
+
+test('a leading rule followed by prose is not frontmatter', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-frontmatter-rule', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'fmrules.md');
+  await showWritten(page, file, '---\n# Heading\n\n---\n\ntail\n', 'tail');
+  await lineBoxes(shownPanel(page)).nth(5).click();
+  await until(async () => (await md(page, 'cm-md-h1').count()) > 0);
+  assert.equal(await md(page, 'cm-md-frontmatter').count(), 0);
+  assert.deepEqual(errors, []);
+}));

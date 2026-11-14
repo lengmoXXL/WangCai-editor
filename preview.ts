@@ -165,6 +165,50 @@ class TableWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+// The YAML frontmatter of an Obsidian-style note, drawn as a block of properties: each key beside its value, an inline
+// list shown as chips. Built as text nodes so nothing in the file can inject markup of its own.
+class FrontmatterWidget extends WidgetType {
+  constructor(readonly text: string, readonly first: number) { super(); }
+  toDOM() {
+    const box = document.createElement('div');
+    box.className = 'cm-md-frontmatter';
+    for (const raw of this.text.split('\n')) {
+      const line = raw.trim();
+      if (!line) continue;
+      const row = document.createElement('div');
+      row.className = 'cm-md-frontmatter-row';
+      const pair = /^([^:#][^:]*):\s*(.*)$/.exec(line);
+      if (pair) {
+        const key = document.createElement('span');
+        key.className = 'cm-md-frontmatter-key';
+        key.textContent = pair[1].trim();
+        const value = document.createElement('span');
+        value.className = 'cm-md-frontmatter-value';
+        const rest = pair[2].trim();
+        if (rest.startsWith('[') && rest.endsWith(']')) {
+          for (const item of rest.slice(1, -1).split(',')) {
+            const chip = item.trim();
+            if (!chip) continue;
+            const el = document.createElement('span');
+            el.className = 'cm-md-frontmatter-item';
+            el.textContent = chip;
+            value.appendChild(el);
+          }
+        } else {
+          value.textContent = rest;
+        }
+        row.append(key, value);
+      } else {
+        row.textContent = line;
+      }
+      box.appendChild(row);
+    }
+    return box;
+  }
+  eq(other: FrontmatterWidget) { return other.text === this.text && other.first === this.first; }
+  ignoreEvent() { return true; }
+}
+
 const headingSize = /^ATXHeading([1-6])$/;
 
 // What the view draws: the markdown rendered inline, with the raw syntax of every line the caret or a selection rests on
@@ -197,9 +241,34 @@ function render(state: EditorState): DecorationSet {
   };
   const line = (pos: number, cls: string) => ranges.push({ from: pos, to: pos, value: Decoration.line({ class: cls }) });
 
+  // A note may open with YAML frontmatter: a leading --- closed by a --- of its own. The parser reads that as a rule and
+  // a heading, so it is taken over here — the caret inside reads it as source, outside the lines collapse and a
+  // properties block draws. A leading rule followed by prose is not frontmatter, so the first body line must name a key.
+  let fmLast = 0;
+  if (doc.lines >= 2 && doc.line(1).text.trim() === '---') {
+    for (let l = 2; l <= doc.lines; l++) {
+      const t = doc.line(l).text.trim();
+      if (t === '---') { fmLast = l; break; }
+    }
+    if (fmLast > 2) {
+      const first = doc.line(2).text.trim();
+      if (!first.includes(':')) fmLast = 0;
+    }
+  }
+  const fmTo = fmLast ? doc.line(fmLast).to : -1;
+  if (fmLast && !revealed(0, fmTo)) {
+    for (let l = 1; l <= fmLast; l++) {
+      const ln = doc.line(l);
+      if (l === fmLast) ranges.push({ from: ln.from, to: ln.to, value: Decoration.mark({ class: 'cm-md-frontmatter-src' }) });
+      else ranges.push({ from: ln.from, to: ln.from, value: Decoration.line({ class: 'cm-md-frontmatter-hidden' }) });
+    }
+    const body = fmLast > 2 ? doc.sliceString(doc.line(2).from, doc.line(fmLast - 1).to) : '';
+    ranges.push({ from: fmTo, to: fmTo, value: Decoration.widget({ widget: new FrontmatterWidget(body, 1), side: 1 }) });
+  }
   syntaxTree(state).iterate({
     enter(node) {
       const { name, from, to } = node;
+      if (fmTo >= 0 && name !== 'Document' && to <= fmTo) return false;
       const heading = headingSize.exec(name);
       if (heading) {
         const hashes = node.node.getChild('HeaderMark');
@@ -311,7 +380,7 @@ function render(state: EditorState): DecorationSet {
 
 // The live preview laid over a markdown buffer: it reads the same syntax tree the highlighting does, so it adds nothing
 // to parse, and it is swapped in and out by a compartment without rebuilding the view. The overlay is one state field so
-// the table motion assist can read the drawn grids back out of state to find a table's neighbourhood.
+// the motion assist can read the drawn blocks back out of state to find a collapsed block's neighbourhood.
 export const markdownPreview = StateField.define<DecorationSet>({
   create: (state) => render(state),
   update: (value, tr) => (tr.docChanged || !tr.state.selection.eq(tr.startState.selection) || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? render(tr.state) : value),
@@ -339,25 +408,27 @@ export const markdownPreviewParse = ViewPlugin.fromClass(class {
   destroy() { this.dead = true; if (this.frame) cancelAnimationFrame(this.frame); }
 });
 
-// Collapsed table lines have no height for the view's vertical motion to land on, so within a table's neighbourhood j/k
-// and the arrows step one source line at a time by hand; the line the caret lands on reveals itself as text.
-function tableNear(state: EditorState, line: number): boolean {
+// Collapsed table and frontmatter lines have no height for the view's vertical motion to land on, so within such a
+// block's neighbourhood j/k and the arrows step one source line at a time by hand; the line the caret lands on reveals
+// itself as text.
+function blockNear(state: EditorState, line: number): boolean {
   const field = state.field(markdownPreview, false);
   if (!field) return false;
   let near = false;
   field.between(0, state.doc.length, (from, to, value) => {
-    if (value.spec.widget instanceof TableWidget) {
+    const widget = value.spec.widget;
+    if (widget instanceof TableWidget || widget instanceof FrontmatterWidget) {
       const last = state.doc.lineAt(to).number;
-      if (line >= value.spec.widget.first - 1 && line <= last + 1) near = true;
+      if (line >= widget.first - 1 && line <= last + 1) near = true;
     }
   });
   return near;
 }
 
-function stepTable(view: EditorView, dir: 1 | -1): boolean {
+function stepBlock(view: EditorView, dir: 1 | -1): boolean {
   const { state } = view;
   const line = state.doc.lineAt(state.selection.main.head).number;
-  if (!tableNear(state, line)) return false;
+  if (!blockNear(state, line)) return false;
   const target = Math.min(Math.max(line + dir, 1), state.doc.lines);
   view.dispatch({ selection: { anchor: state.doc.line(target).from }, scrollIntoView: true });
   return true;
@@ -374,7 +445,7 @@ export const markdownPreviewKeys = Prec.highest(EditorView.domEventHandlers({
       : event.key === 'ArrowUp' ? -1
       : event.key === 'j' && motionMode(view) ? 1
       : event.key === 'k' && motionMode(view) ? -1 : 0;
-    if (!dir || !stepTable(view, dir)) return false;
+    if (!dir || !stepBlock(view, dir)) return false;
     event.preventDefault();
     return true;
   },
