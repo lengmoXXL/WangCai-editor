@@ -11,6 +11,7 @@ import { bindKeys } from '@lengmoxxl/sdk/keys';
 import type { TabRecord, UiContext } from '@lengmoxxl/sdk/channel';
 import { LanguageServices, type FileSymbol, type LocationFeature, type ServiceStatus, type Target } from './lsp';
 import { languageOf, modeFor } from './mode';
+import { markdownPreview } from './preview';
 import { editorTheme } from './theme';
 import { machineKey, type FileClick, type Font, type History, type HistoryEntry, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
 import './style.css';
@@ -191,8 +192,8 @@ function Notice({ text }: { text: string }) {
   return text ? <div className="notice" role="alert">{text}</div> : null;
 }
 
-function Navigation({ context, file, navigate, back, forward, openSearch, dirty, refresh, report }: PageProps & {
-  dirty: boolean; refresh: () => void; report: (text: string) => void;
+function Navigation({ context, file, navigate, back, forward, openSearch, dirty, markdown, preview, togglePreview, refresh, report }: PageProps & {
+  dirty: boolean; markdown: boolean; preview: boolean; togglePreview: () => void; refresh: () => void; report: (text: string) => void;
 }) {
   return <Header>
     <button className="editor-icon" aria-label="后退" title="后退" disabled={!back} onClick={back}>
@@ -204,6 +205,12 @@ function Navigation({ context, file, navigate, back, forward, openSearch, dirty,
     <button className="editor-icon" aria-label="刷新" title="重读文件，并和这里的改动合并" onClick={refresh}>
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.3 6.7A5.3 5.3 0 1 0 12 12 M13.3 2.7v4h-4" /></svg>
     </button>
+    {markdown && <button className="editor-icon" aria-label="切换实时预览" aria-pressed={preview}
+      title={preview ? '实时预览：开（点击看源码）' : '实时预览：关（点击渲染）'} onClick={togglePreview}>
+      {preview
+        ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12 M2 8h8 M2 12h10" /></svg>
+        : <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5.5 4-3.5 4 3.5 4 M10.5 4l3.5 4-3.5 4" /></svg>}
+    </button>}
     <Address context={context} base={file} navigate={navigate} report={report} />
     {dirty && <span className="editor-dirty" role="status" aria-label="有未写回的改动" title="有未写回的改动">*</span>}
     <div className="editor-tail">
@@ -274,7 +281,7 @@ function Overlay({ className, role, label, at, onClose, children }: {
 
 type Editing = { onDoc: (text: string) => void; say: (text: string) => void };
 
-function EditorPage({ file, text, remember, peeking, navigate, editing }: { file: HistoryEntry; text: { body: string }; remember: Remember; peeking: boolean; navigate: Navigate; editing: Editing }) {
+function EditorPage({ file, text, remember, peeking, navigate, editing, preview }: { file: HistoryEntry; text: { body: string }; remember: Remember; peeking: boolean; navigate: Navigate; editing: Editing; preview: boolean }) {
   const element = useRef<HTMLDivElement>(null);
   const control = useRef<EditorView>(undefined);
   // The view reaches back through this, so the one built once keeps calling the current render's callbacks.
@@ -289,6 +296,7 @@ function EditorPage({ file, text, remember, peeking, navigate, editing }: { file
   // The server's part of the view is swapped in place rather than taken as a reason to build the view again: a view built
   // again loses what is being typed into it, and a server coming up or going away is no reason for that.
   const server = useMemo(() => new Compartment(), []);
+  const previewComp = useMemo(() => new Compartment(), []);
   // The link to the session there is now: `session` is only the signal for taking a new one, which is why it is a
   // dependency without the body reading it — `extension` reads the session itself.
   const link = useMemo(() => (options && services ? services.extension(options) : []), [options, session]);
@@ -328,6 +336,7 @@ function EditorPage({ file, text, remember, peeking, navigate, editing }: { file
           ...chrome,
           modeFor(file.path),
           server.of(link),
+          previewComp.of(preview ? markdownPreview : []),
           EditorView.updateListener.of((update) => {
             if (update.selectionSet) remember(shown.current, positionOf(update.view));
             if (update.docChanged) handlers.current.onDoc(update.state.doc.toString());
@@ -355,6 +364,10 @@ function EditorPage({ file, text, remember, peeking, navigate, editing }: { file
     const view = control.current;
     if (view) view.dispatch({ effects: server.reconfigure(link) });
   }, [server, link]);
+  useEffect(() => {
+    const view = control.current;
+    if (view) view.dispatch({ effects: previewComp.reconfigure(preview ? markdownPreview : []) });
+  }, [previewComp, preview]);
   // Where the view sits: the caret goes on the line the entry names, the scroll is put back at the offset the file was
   // left at, or else centred on that line, and an entry that names no place is the file at its top. A view built again
   // starts at its own top with the caret at the first line, so the entry is placed for it once more; a panel that has
@@ -505,6 +518,8 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
   const [readError, setReadError] = useState('');
   const [notice, report] = useNotice();
   const [dirty, setDirty] = useState(false);
+  const markdown = languageOf(file.path) === 'markdown';
+  const [preview, setPreview] = useState(markdown);
   const main = useRef<HTMLDivElement>(null);
   const [refreshes, setRefreshes] = useState(0);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -590,12 +605,13 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
   };
   return <Shell>
     <Navigation context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} dirty={dirty}
+      markdown={markdown} preview={preview} togglePreview={() => setPreview((on) => !on)}
       refresh={() => setRefreshes((count) => count + 1)} report={report} />
     <div className="editor-main" ref={main}>
       <Notice text={notice} />
       {readError ? <div className="file-message" role="alert">{readError}</div>
         : text === undefined ? <div className="file-message">正在读取…</div>
-        : <EditorPage file={file} text={text} remember={remember} peeking={peeking} navigate={navigate} editing={editing} />}
+        : <EditorPage file={file} text={text} remember={remember} peeking={peeking} navigate={navigate} editing={editing} preview={markdown && preview} />}
     </div>
   </Shell>;
 }
