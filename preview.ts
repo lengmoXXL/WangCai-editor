@@ -1,6 +1,6 @@
 import { forceParsing, syntaxTree } from '@codemirror/language';
-import { Compartment, Facet, Prec, StateField, type EditorState, type Range } from '@codemirror/state';
-import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view';
+import { Compartment, Facet, Prec, type EditorState, type Range } from '@codemirror/state';
+import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { getCM } from '@replit/codemirror-vim';
 
 // The channel a local image's bytes come through: the page cannot reach the machine's disk for an <img> of its own, so
@@ -213,7 +213,7 @@ const headingSize = /^ATXHeading([1-6])$/;
 
 // What the view draws: the markdown rendered inline, with the raw syntax of every line the caret or a selection rests on
 // left visible, the way a live preview lets the line being edited be edited as text.
-function render(state: EditorState): DecorationSet {
+function render(state: EditorState, from: number, to: number): DecorationSet {
   const doc = state.doc;
   const loadImage = state.facet(previewImageSource)[0];
   const active = new Set<number>();
@@ -256,7 +256,7 @@ function render(state: EditorState): DecorationSet {
     }
   }
   const fmTo = fmLast ? doc.line(fmLast).to : -1;
-  if (fmLast && !revealed(0, fmTo)) {
+  if (fmLast && from <= fmTo && !revealed(0, fmTo)) {
     for (let l = 1; l <= fmLast; l++) {
       const ln = doc.line(l);
       if (l === fmLast) ranges.push({ from: ln.from, to: ln.to, value: Decoration.mark({ class: 'cm-md-frontmatter-src' }) });
@@ -265,7 +265,7 @@ function render(state: EditorState): DecorationSet {
     const body = fmLast > 2 ? doc.sliceString(doc.line(2).from, doc.line(fmLast - 1).to) : '';
     ranges.push({ from: fmTo, to: fmTo, value: Decoration.widget({ widget: new FrontmatterWidget(body, 1), side: 1 }) });
   }
-  syntaxTree(state).iterate({
+  syntaxTree(state).iterate({ from, to,
     enter(node) {
       const { name, from, to } = node;
       if (fmTo >= 0 && name !== 'Document' && to <= fmTo) return false;
@@ -379,13 +379,30 @@ function render(state: EditorState): DecorationSet {
 }
 
 // The live preview laid over a markdown buffer: it reads the same syntax tree the highlighting does, so it adds nothing
-// to parse, and it is swapped in and out by a compartment without rebuilding the view. The overlay is one state field so
-// the motion assist can read the drawn blocks back out of state to find a collapsed block's neighbourhood.
-export const markdownPreview = StateField.define<DecorationSet>({
-  create: (state) => render(state),
-  update: (value, tr) => (tr.docChanged || !tr.state.selection.eq(tr.startState.selection) || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? render(tr.state) : value),
-  provide: (field) => EditorView.decorations.from(field),
-});
+// to parse, and it is swapped in and out by a compartment without rebuilding the view. Decorations are built only for the
+// viewport and a margin around it, so their cost stays flat as the file grows; a parse that merely extends the tree past
+// the range already drawn reuses the decorations instead of rebuilding them. The motion assist reads the drawn blocks
+// back out of the plugin to find a collapsed block's neighbourhood.
+const previewMargin = 1000;
+const previewRange = (view: EditorView) => {
+  const { from, to } = view.viewport;
+  return { from: Math.max(0, from - previewMargin), to: Math.min(view.state.doc.length, to + previewMargin) };
+};
+export const markdownPreview = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(view: EditorView) { this.decorations = this.build(view); }
+  update(u: ViewUpdate) {
+    const { to } = previewRange(u.view);
+    const before = syntaxTree(u.startState);
+    if (u.viewportChanged || u.docChanged || u.selectionSet || (before !== syntaxTree(u.state) && before.length < to)) {
+      this.decorations = this.build(u.view);
+    }
+  }
+  private build(view: EditorView) {
+    const { from, to } = previewRange(view);
+    return render(view.state, from, to);
+  }
+}, { decorations: plugin => plugin.decorations });
 
 // The idle parser only runs while it has focus, budget and no pending input, so a page can sit unrendered until a
 // click wakes it. Drive the parse here instead: whenever the viewport is not covered, parse forward a bounded slice
@@ -411,14 +428,14 @@ export const markdownPreviewParse = ViewPlugin.fromClass(class {
 // Collapsed table and frontmatter lines have no height for the view's vertical motion to land on, so within such a
 // block's neighbourhood j/k and the arrows step one source line at a time by hand; the line the caret lands on reveals
 // itself as text.
-function blockNear(state: EditorState, line: number): boolean {
-  const field = state.field(markdownPreview, false);
-  if (!field) return false;
+function blockNear(view: EditorView, line: number): boolean {
+  const plugin = view.plugin(markdownPreview);
+  if (!plugin) return false;
   let near = false;
-  field.between(0, state.doc.length, (from, to, value) => {
+  plugin.decorations.between(0, view.state.doc.length, (from, to, value) => {
     const widget = value.spec.widget;
     if (widget instanceof TableWidget || widget instanceof FrontmatterWidget) {
-      const last = state.doc.lineAt(to).number;
+      const last = view.state.doc.lineAt(to).number;
       if (line >= widget.first - 1 && line <= last + 1) near = true;
     }
   });
@@ -428,7 +445,7 @@ function blockNear(state: EditorState, line: number): boolean {
 function stepBlock(view: EditorView, dir: 1 | -1): boolean {
   const { state } = view;
   const line = state.doc.lineAt(state.selection.main.head).number;
-  if (!blockNear(state, line)) return false;
+  if (!blockNear(view, line)) return false;
   const target = Math.min(Math.max(line + dir, 1), state.doc.lines);
   view.dispatch({ selection: { anchor: state.doc.line(target).from }, scrollIntoView: true });
   return true;
