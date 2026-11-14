@@ -3,7 +3,7 @@ import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, drawSelection, highlightActiveLine, lineNumbers } from '@codemirror/view';
 import { Vim, getCM, vim, type CodeMirrorV } from '@replit/codemirror-vim';
 import { createRoot } from 'react-dom/client';
-import { useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import fuzzysort from 'fuzzysort';
 import { merge } from 'node-diff3';
 import type { WorkspaceActive } from '@lengmoxxl/sdk';
@@ -11,7 +11,7 @@ import { bindKeys } from '@lengmoxxl/sdk/keys';
 import type { TabRecord, UiContext } from '@lengmoxxl/sdk/channel';
 import { LanguageServices, type FileSymbol, type LocationFeature, type ServiceStatus, type Target } from './lsp';
 import { languageOf, modeFor } from './mode';
-import { markdownPreview } from './preview';
+import { markdownPreview, markdownPreviewKeys } from './preview';
 import { editorTheme } from './theme';
 import { machineKey, type FileClick, type Font, type History, type HistoryEntry, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
 import './style.css';
@@ -281,8 +281,21 @@ function Overlay({ className, role, label, at, onClose, children }: {
 
 type Editing = { onDoc: (text: string) => void; say: (text: string) => void };
 
+// The rendered page's width is kept as the share of the pane it filled, so a pane widened or narrowed later keeps the
+// line the reader chose, the same bargain the preview tab makes for its page.
+const widthKey = 'editor-page-width';
+const minPageWidth = 200;
+const keptShare = () => {
+  const kept = Number(localStorage.getItem(widthKey));
+  return kept > 0 && kept <= 1 ? kept : 1;
+};
+const previewExtensions = [markdownPreview, markdownPreviewKeys, EditorView.lineWrapping];
+
 function EditorPage({ file, text, remember, peeking, navigate, editing, preview }: { file: HistoryEntry; text: { body: string }; remember: Remember; peeking: boolean; navigate: Navigate; editing: Editing; preview: boolean }) {
   const element = useRef<HTMLDivElement>(null);
+  const row = useRef<HTMLDivElement>(null);
+  const divider = useRef<HTMLDivElement>(null);
+  const dragged = useRef({ at: 0, width: 0 });
   const control = useRef<EditorView>(undefined);
   // The view reaches back through this, so the one built once keeps calling the current render's callbacks.
   const handlers = useRef(editing);
@@ -336,7 +349,7 @@ function EditorPage({ file, text, remember, peeking, navigate, editing, preview 
           ...chrome,
           modeFor(file.path),
           server.of(link),
-          previewComp.of(preview ? markdownPreview : []),
+          previewComp.of(preview ? previewExtensions : []),
           EditorView.updateListener.of((update) => {
             if (update.selectionSet) remember(shown.current, positionOf(update.view));
             if (update.docChanged) handlers.current.onDoc(update.state.doc.toString());
@@ -366,7 +379,7 @@ function EditorPage({ file, text, remember, peeking, navigate, editing, preview 
   }, [server, link]);
   useEffect(() => {
     const view = control.current;
-    if (view) view.dispatch({ effects: previewComp.reconfigure(preview ? markdownPreview : []) });
+    if (view) view.dispatch({ effects: previewComp.reconfigure(preview ? previewExtensions : []) });
   }, [previewComp, preview]);
   // Where the view sits: the caret goes on the line the entry names, the scroll is put back at the offset the file was
   // left at, or else centred on that line, and an entry that names no place is the file at its top. A view built again
@@ -460,8 +473,59 @@ function EditorPage({ file, text, remember, peeking, navigate, editing, preview 
     page.addEventListener('focus', leaveInsert);
     return () => page.removeEventListener('focus', leaveInsert);
   }, []);
+  // The page's text is capped to the chosen width while the editor's scroller keeps the whole pane, so the scrollbar stays
+  // at the pane's right edge like the preview tab; the divider rides the capped content's right edge.
+  const room = () => Math.max(0, row.current!.clientWidth - divider.current!.offsetWidth);
+  const pageWidth = () => parseFloat(row.current!.style.getPropertyValue('--page-width'));
+  const paint = (width: number) => {
+    const painted = Math.min(room(), Math.max(minPageWidth, Math.round(width)));
+    const gutter = element.current!.querySelector('.cm-gutters')?.getBoundingClientRect().width ?? 0;
+    row.current!.style.setProperty('--page-width', `${painted}px`);
+    row.current!.style.setProperty('--content-width', `${Math.max(0, painted - gutter)}px`);
+    divider.current!.setAttribute('aria-valuemin', String(minPageWidth));
+    divider.current!.setAttribute('aria-valuemax', String(room()));
+    divider.current!.setAttribute('aria-valuenow', String(painted));
+  };
+  const resize = (width: number) => {
+    paint(width);
+    localStorage.setItem(widthKey, String(pageWidth() / room()));
+  };
+  useLayoutEffect(() => {
+    if (!preview) {
+      row.current!.style.removeProperty('--page-width');
+      row.current!.style.removeProperty('--content-width');
+      return;
+    }
+    const paintKept = () => paint(keptShare() * room());
+    paintKept();
+    // The gutter only exists once the view mounts, so measure again on the next frame.
+    const raf = requestAnimationFrame(paintKept);
+    const observer = new ResizeObserver(paintKept);
+    observer.observe(row.current!);
+    return () => { cancelAnimationFrame(raf); observer.disconnect(); };
+  }, [preview]);
   return <>
-    <div className="editor-code" ref={element} />
+    <div className={`editor-page-row${preview ? ' previewing' : ''}`} ref={row}>
+      <div className="editor-code" ref={element} />
+      {preview && <div className="editor-divider" ref={divider} role="separator" aria-label="调整渲染宽度" aria-orientation="vertical" tabIndex={0}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          dragged.current = { at: event.clientX, width: pageWidth() };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) resize(dragged.current.width + event.clientX - dragged.current.at);
+        }}
+        onPointerUp={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          resize(pageWidth() + (event.key === 'ArrowRight' ? 20 : -20));
+        }} />}
+    </div>
     {menu && <Overlay className="code-menu" role="menu" label="语言服务" at={{ left: menu.x, top: menu.y }} onClose={closePanels}>
       {menu.entries.map(([feature, { label }]) => <button key={feature} role="menuitem"
         onClick={() => {

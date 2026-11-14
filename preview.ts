@@ -1,6 +1,7 @@
 import { syntaxTree } from '@codemirror/language';
-import type { Range } from '@codemirror/state';
-import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { Prec, StateField, type EditorState, type Range } from '@codemirror/state';
+import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
+import { getCM } from '@replit/codemirror-vim';
 
 // A horizontal rule is drawn as a line of its own rather than the dashes that name it.
 class RuleWidget extends WidgetType {
@@ -74,12 +75,75 @@ class CodeLanguageWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+// A table cell keeps the inline marks the rest of the page draws, built as text nodes so nothing in the file can inject
+// markup of its own.
+const inlineToken = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(~~[^~]+~~)|(\[[^\]]*\]\([^)\s]+\))/g;
+function appendInline(parent: HTMLElement, text: string) {
+  let last = 0;
+  for (const m of text.matchAll(inlineToken)) {
+    const at = m.index ?? 0;
+    if (at > last) parent.appendChild(document.createTextNode(text.slice(last, at)));
+    const tok = m[0];
+    let el: HTMLElement;
+    if (tok.startsWith('`')) { el = document.createElement('code'); el.className = 'cm-md-code'; el.textContent = tok.slice(1, -1); }
+    else if (tok.startsWith('**')) { el = document.createElement('strong'); el.className = 'cm-md-bold'; el.textContent = tok.slice(2, -2); }
+    else if (tok.startsWith('~~')) { el = document.createElement('span'); el.className = 'cm-md-strike'; el.textContent = tok.slice(2, -2); }
+    else if (tok.startsWith('*')) { el = document.createElement('em'); el.className = 'cm-md-italic'; el.textContent = tok.slice(1, -1); }
+    else { el = document.createElement('span'); el.className = 'cm-md-link'; el.textContent = /^\[([^\]]*)\]/.exec(tok)![1]; }
+    parent.appendChild(el);
+    last = at + tok.length;
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+
+// A table is drawn as a grid below the lines that name it, which keep their line boxes so vertical motion walks them;
+// header and alignment are read from the delimiter row, the way the preview tab draws GFM tables.
+class TableWidget extends WidgetType {
+  constructor(readonly text: string, readonly first: number) { super(); }
+  toDOM() {
+    const lines = this.text.split('\n').filter((l) => l.trim() !== '');
+    const row = (l: string) => {
+      let s = l.trim();
+      if (s.startsWith('|')) s = s.slice(1);
+      if (s.endsWith('|')) s = s.slice(0, -1);
+      return s.split('|').map((c) => c.trim());
+    };
+    const align = (d: string) => {
+      const left = d.startsWith(':'), right = d.endsWith(':');
+      return left && right ? 'center' : right ? 'right' : left ? 'left' : '';
+    };
+    const delim = lines[1] ? row(lines[1]) : [];
+    const cell = (tag: 'th' | 'td', c: string, i: number) => {
+      const el = document.createElement(tag);
+      const a = align(delim[i] || '');
+      if (a) el.style.textAlign = a;
+      appendInline(el, c);
+      return el;
+    };
+    const table = document.createElement('table');
+    table.className = 'cm-md-table';
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+    row(lines[0]).forEach((c, i) => hr.appendChild(cell('th', c, i)));
+    thead.appendChild(hr);
+    const tbody = document.createElement('tbody');
+    for (const l of lines.slice(2)) {
+      const tr = document.createElement('tr');
+      row(l).forEach((c, i) => tr.appendChild(cell('td', c, i)));
+      tbody.appendChild(tr);
+    }
+    table.append(thead, tbody);
+    return table;
+  }
+  eq(other: TableWidget) { return other.text === this.text && other.first === this.first; }
+  ignoreEvent() { return true; }
+}
+
 const headingSize = /^ATXHeading([1-6])$/;
 
 // What the view draws: the markdown rendered inline, with the raw syntax of every line the caret or a selection rests on
 // left visible, the way a live preview lets the line being edited be edited as text.
-function render(view: EditorView): DecorationSet {
-  const { state } = view;
+function render(state: EditorState): DecorationSet {
   const doc = state.doc;
   const active = new Set<number>();
   for (const range of state.selection.ranges) {
@@ -185,6 +249,20 @@ function render(view: EditorView): DecorationSet {
         }
         return false;
       }
+      if (name === 'Table') {
+        // Caret or selection anywhere in the table reads it as full source; outside, the source collapses and the grid draws.
+        if (revealed(from, to)) return false;
+        const firstLine = doc.lineAt(from).number;
+        const lastLine = doc.lineAt(to).number;
+        for (let l = firstLine; l <= lastLine; l++) {
+          const ln = doc.line(l);
+          if (l === lastLine) ranges.push({ from: ln.from, to: ln.to, value: Decoration.mark({ class: 'cm-md-table-src' }) });
+          else ranges.push({ from: ln.from, to: ln.from, value: Decoration.line({ class: 'cm-md-table-hidden' }) });
+        }
+        const last = doc.line(lastLine).to;
+        ranges.push({ from: last, to: last, value: Decoration.widget({ widget: new TableWidget(doc.sliceString(from, last), firstLine), side: 1 }) });
+        return false;
+      }
       if (name === 'HorizontalRule') {
         if (!revealed(from, to)) ranges.push({ from, to, value: Decoration.replace({ widget: new RuleWidget() }) });
         return false;
@@ -204,16 +282,53 @@ function render(view: EditorView): DecorationSet {
   return Decoration.set(ranges, true);
 }
 
-class LivePreview {
-  decorations: DecorationSet;
-  constructor(view: EditorView) { this.decorations = render(view); }
-  update(update: ViewUpdate) {
-    if (update.docChanged || update.selectionSet || update.viewportChanged || syntaxTree(update.startState) !== syntaxTree(update.state)) {
-      this.decorations = render(update.view);
+// The live preview laid over a markdown buffer: it reads the same syntax tree the highlighting does, so it adds nothing
+// to parse, and it is swapped in and out by a compartment without rebuilding the view. The overlay is one state field so
+// the table motion assist can read the drawn grids back out of state to find a table's neighbourhood.
+export const markdownPreview = StateField.define<DecorationSet>({
+  create: (state) => render(state),
+  update: (value, tr) => (tr.docChanged || !tr.state.selection.eq(tr.startState.selection) || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? render(tr.state) : value),
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+// Collapsed table lines have no height for the view's vertical motion to land on, so within a table's neighbourhood j/k
+// and the arrows step one source line at a time by hand; the line the caret lands on reveals itself as text.
+function tableNear(state: EditorState, line: number): boolean {
+  const field = state.field(markdownPreview, false);
+  if (!field) return false;
+  let near = false;
+  field.between(0, state.doc.length, (from, to, value) => {
+    if (value.spec.widget instanceof TableWidget) {
+      const last = state.doc.lineAt(to).number;
+      if (line >= value.spec.widget.first - 1 && line <= last + 1) near = true;
     }
-  }
+  });
+  return near;
 }
 
-// The live preview laid over a markdown buffer: it reads the same syntax tree the highlighting does, so it adds nothing
-// to parse, and it is swapped in and out by a compartment without rebuilding the view.
-export const markdownPreview = ViewPlugin.fromClass(LivePreview, { decorations: (plugin) => plugin.decorations });
+function stepTable(view: EditorView, dir: 1 | -1): boolean {
+  const { state } = view;
+  const line = state.doc.lineAt(state.selection.main.head).number;
+  if (!tableNear(state, line)) return false;
+  const target = Math.min(Math.max(line + dir, 1), state.doc.lines);
+  view.dispatch({ selection: { anchor: state.doc.line(target).from }, scrollIntoView: true });
+  return true;
+}
+
+const motionMode = (view: EditorView) => {
+  const vim = getCM(view)?.state?.vim;
+  return !!vim && !vim.insertMode;
+};
+
+export const markdownPreviewKeys = Prec.highest(EditorView.domEventHandlers({
+  keydown: (event, view) => {
+    const dir = event.key === 'ArrowDown' ? 1
+      : event.key === 'ArrowUp' ? -1
+      : event.key === 'j' && motionMode(view) ? 1
+      : event.key === 'k' && motionMode(view) ? -1 : 0;
+    if (!dir || !stepTable(view, dir)) return false;
+    event.preventDefault();
+    return true;
+  },
+}));
+
