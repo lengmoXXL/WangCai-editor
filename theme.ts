@@ -40,7 +40,9 @@ export function editorTheme(theme: Theme, font: Font) {
     { tag: [tags.typeName, tags.className, tags.namespace, tags.tagName], color: theme.cyan },
     { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.macroName], color: theme.blue },
     { tag: [tags.constant(tags.variableName), tags.standard(tags.variableName), tags.self], color: theme.brightMagenta },
-    { tag: [tags.heading, tags.strong], color: theme.blue, fontWeight: '600' },
+    { tag: tags.heading, color: theme.blue, fontWeight: '600' },
+    // Bold keeps the body colour (the preview strengthens it); only headings take the accent hue.
+    { tag: tags.strong, fontWeight: '600' },
     { tag: tags.emphasis, fontStyle: 'italic' },
     { tag: [tags.link, tags.url], color: theme.cyan, textDecoration: 'underline' },
   ]);

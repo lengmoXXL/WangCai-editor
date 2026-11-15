@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全局主题 token · Markdown 预览</title>
+<style id="base-css">
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font: 13px/1.5 -apple-system, "PingFang SC", "Segoe UI", sans-serif;
+    color: var(--wc-foreground);
+    background: var(--wc-background);
+    transition: background-color .25s ease, color .25s ease;
+    overflow: hidden;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(60% 40% at 12% -6%, color-mix(in srgb, var(--wc-accent) 9%, transparent), transparent 70%),
+      radial-gradient(50% 36% at 92% 4%, color-mix(in srgb, var(--wc-magenta) 7%, transparent), transparent 72%);
+  }
+  .app { position: relative; z-index: 1; display: flex; flex-direction: column; height: 100%; }
+  header {
+    flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--wc-border);
+    background: color-mix(in srgb, var(--wc-overlay) 55%, transparent); backdrop-filter: blur(6px);
+  }
+  header h1 { margin: 0; font-size: 14px; font-weight: 700; }
+  header h1 em { font-style: normal; color: var(--wc-accent); }
+  header .sub { color: var(--wc-muted); font-size: 12px; margin-right: auto; }
+  header select, header button {
+    font: inherit; color: var(--wc-foreground); background: var(--wc-overlay);
+    border: 1px solid var(--wc-border); border-radius: 6px; padding: 5px 10px; cursor: pointer;
+    transition: border-color .15s, transform .05s;
+  }
+  header select:hover, header button:hover { border-color: var(--wc-accent); }
+  header button:active { transform: translateY(1px); }
+  header button.primary { background: var(--wc-accent); border-color: var(--wc-accent); color: var(--wc-background); font-weight: 600; }
+  .cols { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0,1fr) 320px; }
+  .stage { min-width: 0; overflow-y: auto; padding: 40px 32px 96px; }
+  .rail { overflow-y: auto; border-left: 1px solid var(--wc-border); background: color-mix(in srgb, var(--wc-overlay) 40%, transparent); padding: 14px 16px 40px; }
+  .stage::-webkit-scrollbar, .rail::-webkit-scrollbar { width: 10px; height: 10px; }
+  .stage::-webkit-scrollbar-track, .rail::-webkit-scrollbar-track { background: transparent; }
+  .stage::-webkit-scrollbar-thumb, .rail::-webkit-scrollbar-thumb { background: var(--wc-border); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
+  .stage::-webkit-scrollbar-thumb:hover, .rail::-webkit-scrollbar-thumb:hover { background: var(--wc-accent); background-clip: content-box; }
+  .group { margin-bottom: 16px; }
+  .group > h2 { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--wc-muted); display: flex; align-items: center; gap: 8px; }
+  .group > h2::after { content: ''; flex: 1; height: 1px; background: var(--wc-border); }
+  .row { display: grid; grid-template-columns: 76px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 3px 0; }
+  .row label { color: var(--wc-muted); font-size: 12px; }
+  .row input[type=color] { width: 100%; height: 24px; padding: 2px; border: 1px solid var(--wc-border); border-radius: 5px; background: var(--wc-overlay); cursor: pointer; }
+  .row input[type=color]::-webkit-color-swatch-wrapper { padding: 1px; }
+  .row input[type=color]::-webkit-color-swatch { border: none; border-radius: 3px; }
+  .row .hex { color: var(--wc-muted); font-size: 11px; font-family: ui-monospace, monospace; }
+  .note { color: var(--wc-muted); font-size: 11px; line-height: 1.5; padding: 2px 0 8px; }
+  .toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 16px); z-index: 9;
+    padding: 8px 16px; border-radius: 8px; border: 1px solid var(--wc-accent);
+    background: var(--wc-overlay); color: var(--wc-foreground); font-size: 12px;
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; box-shadow: 0 8px 24px #0007;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  @media (max-width: 940px) {
+    body { overflow: auto; }
+    .app { height: auto; min-height: 100%; }
+    .cols { grid-template-columns: 1fr; }
+    .stage { overflow: visible; padding: 24px 16px 48px; }
+    .rail { border-left: 0; border-top: 1px solid var(--wc-border); overflow: visible; }
+  }
+</style>
+<style id="md-css">
+  /* Reads the global --wc-* tokens only; identical to the editor's markdown preview. */
+  .sheet {
+    max-width: 760px; margin: 0 auto;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", monospace;
+    font-size: 14px; line-height: 1.7; color: var(--wc-foreground);
+  }
+  .sheet > * { margin: 0 0 14px; transition: color .18s, background-color .18s, border-color .18s; }
+  .sheet > *:last-child { margin-bottom: 0; }
+  .cm-md-h1, .cm-md-h2, .cm-md-h3 { font-weight: 700; line-height: 1.3; color: var(--wc-foreground); }
+  .cm-md-h1 { font-size: 1.7em; color: var(--wc-blue); }
+  .cm-md-h2 { font-size: 1.45em; color: var(--wc-blue); }
+  .cm-md-h3 { font-size: 1.25em; }
+  .cm-md-bold { font-weight: 700; color: color-mix(in srgb, var(--wc-foreground) 80%, light-dark(#000000, #ffffff)); }
+  .cm-md-italic { font-style: italic; }
+  .cm-md-strike { text-decoration: line-through; color: var(--wc-muted); }
+  .cm-md-code { padding: 1px 5px; background: var(--wc-overlay); border-radius: 3px; font-size: .9em; }
+  .cm-md-link { color: var(--wc-cyan); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+  .cm-md-bullet { color: var(--wc-accent); font-weight: 700; margin-right: 6px; }
+  .md-li { padding-left: 14px; }
+  .cm-md-quote { border-left: 2px solid var(--wc-accent); padding-left: 8px; background: color-mix(in srgb, var(--wc-accent) 8%, transparent); color: var(--wc-muted); font-style: italic; }
+  .cm-md-rule { height: 0; border-top: 1px solid var(--wc-border); }
+  .cm-md-codeblock { background: var(--wc-overlay); border-left: 1px solid var(--wc-border); border-right: 1px solid var(--wc-border); padding: 0 12px; font-size: .9em; margin-bottom: 0; }
+  .cm-md-codeblock-top { border-top: 1px solid var(--wc-border); border-radius: 4px 4px 0 0; padding-top: 6px; }
+  .cm-md-codeblock-bottom { border-bottom: 1px solid var(--wc-border); border-radius: 0 0 4px 4px; padding-bottom: 6px; margin-bottom: 14px; }
+  .cm-md-code-lang { float: right; color: var(--wc-muted); font-size: .85em; }
+  .tok-k { color: var(--wc-magenta); } .tok-s { color: var(--wc-green); } .tok-n { color: var(--wc-yellow); } .tok-c { color: var(--wc-muted); }
+  .cm-md-table { border-collapse: collapse; color: var(--wc-foreground); font-size: .95em; }
+  .cm-md-table th, .cm-md-table td { padding: 4px 8px; border: 1px solid var(--wc-border); }
+  .cm-md-table th { background: var(--wc-overlay); font-weight: 700; }
+  .cm-md-task { accent-color: var(--wc-accent); width: 13px; height: 13px; margin-right: 5px; vertical-align: middle; cursor: pointer; }
+  .cm-md-image-local { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--wc-border); border-left: 2px solid var(--wc-magenta); border-radius: 4px; background: var(--wc-overlay); }
+  .cm-md-image-label { color: var(--wc-magenta); font-weight: 600; }
+  .cm-md-image-name { color: var(--wc-muted); }
+  .cm-md-frontmatter { display: block; padding: 6px 10px; border: 1px solid var(--wc-border); border-left: 2px solid var(--wc-accent); border-radius: 4px; background: var(--wc-overlay); font-size: .92em; }
+  .cm-md-frontmatter-row { display: flex; gap: 8px; align-items: baseline; padding: 1px 0; }
+  .cm-md-frontmatter-key { color: var(--wc-muted); font-weight: 600; flex-shrink: 0; }
+  .cm-md-frontmatter-value { color: var(--wc-foreground); }
+  .cm-md-frontmatter-item { display: inline-block; padding: 0 6px; margin-right: 4px; border: 1px solid var(--wc-border); border-radius: 3px; color: var(--wc-cyan); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>全局主题 <em>token</em></h1>
+    <span class="sub">一套 --wc-* 供所有插件读取 · 复制为 init.ts 的 theme</span>
+    <select id="preset" aria-label="主题预设"></select>
+    <button id="random">随机</button>
+    <button id="reset">重置</button>
+    <button id="download">下载 .css</button>
+    <button id="copy" class="primary">复制 init.ts theme</button>
+  </header>
+  <div class="cols">
+    <div class="stage">
+      <div class="sheet" id="sheet">
+        <div class="cm-md-frontmatter">
+          <div class="cm-md-frontmatter-row"><span class="cm-md-frontmatter-key">tags</span><span class="cm-md-frontmatter-value"><span class="cm-md-frontmatter-item">papers</span><span class="cm-md-frontmatter-item">distributed-systems</span></span></div>
+          <div class="cm-md-frontmatter-row"><span class="cm-md-frontmatter-key">status</span><span class="cm-md-frontmatter-value">reading</span></div>
+        </div>
+        <div class="cm-md-h1">末日想象谱系</div>
+        <div>从"最后的人"到"文明退化"，再到核时代的绝望与重建。这是一条贯穿两个世纪的<span class="cm-md-bold">想象脉络</span>，也是<span class="cm-md-italic">类型文学</span>自我更新的历史。</div>
+        <div class="cm-md-h2">一、 概念诞生 (1805—1912)</div>
+        <div>末日想象最初不是"废土"，而是"最后的人"。它确立两件事：末日是<span class="cm-md-bold">世俗灾难而非神罚</span>，主角是文明尽头的孤独幸存者。</div>
+        <div class="md-li"><span class="cm-md-bullet">-</span>概念最早：1805 年格兰维尔的《最后的人》已把《启示录》改写为世俗未来故事；但真正定型的是 <span class="cm-md-bold">1826 年玛丽·雪莱《最后一个人》</span>——《科幻百科全书》即以它为起点。</div>
+        <div class="md-li"><span class="cm-md-bullet">-</span>加入"废土"本身：<span class="cm-md-bold">1885 年《伦敦之后》</span>第一次系统写"文明退化为蛮荒、自然收复城市"，这才是"废土/废墟大地"美学的文学原型。</div>
+        <div class="md-li"><span class="cm-md-bullet">-</span>加入心理与断代：<span class="cm-md-bold">1901 年《紫云》</span>把独存者的孤独推向心理极端；<span class="cm-md-bold">1912 年《猩红瘟疫》</span>把镜头从灾难移到数代之后。</div>
+        <div class="md-li"><input type="checkbox" class="cm-md-task" checked>已读：玛丽·雪莱《最后一个人》</div>
+        <div class="md-li"><input type="checkbox" class="cm-md-task">待读：《伦敦之后》<span class="cm-md-strike">（旧译本）</span></div>
+        <div class="cm-md-quote">小结：这一阶段产出两大母题——"最后的人"（孤独）与"文明退化"（废土），后世几乎所有作品都是这两者的变奏。</div>
+        <div class="cm-md-h2">二、 核时代定型 (1949—1968)</div>
+        <div>原子弹让末日从思想实验变成大众焦虑，类型迅速分化。参见 <span class="cm-md-link">末日小说年表</span> 与 <code class="cm-md-code">genre.map()</code>。</div>
+        <table class="cm-md-table">
+          <thead><tr><th>年份</th><th>作品</th><th>母题</th></tr></thead>
+          <tbody>
+            <tr><td>1949</td><td>《地球长存》</td><td>生态反弹</td></tr>
+            <tr><td>1954</td><td>《我是传奇》</td><td>感染 / 吸血鬼</td></tr>
+            <tr><td>1959</td><td>《阿拉斯，巴比伦》</td><td>社区重建</td></tr>
+            <tr><td>1968</td><td>《活死人之夜》</td><td>现代丧尸</td></tr>
+          </tbody>
+        </table>
+        <div class="cm-md-codeblock cm-md-codeblock-top"><span class="cm-md-code-lang">ts</span><span class="tok-c">// 母题随时间分化</span></div>
+        <div class="cm-md-codeblock"><span class="tok-k">const</span> motifs = [<span class="tok-s">'孤独'</span>, <span class="tok-s">'废土'</span>, <span class="tok-s">'重建'</span>];</div>
+        <div class="cm-md-codeblock cm-md-codeblock-bottom">motifs.map((m, i) =&gt; ({ era: <span class="tok-n">1900</span> + i * <span class="tok-n">20</span>, motif: m }));</div>
+        <div class="cm-md-rule"></div>
+        <div class="cm-md-h3">附：封面与来源</div>
+        <div><span class="cm-md-image-local"><span class="cm-md-image-label">图</span><span class="cm-md-image-name">./cover.png</span></span> 本地图片以芯片显示；正文引用见 <span class="cm-md-link">SFE 条目</span>。</div>
+      </div>
+    </div>
+    <aside class="rail" id="rail"></aside>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// The global theme tokens, defaulting to the tuned palette now shipped in the shell.
+const DEFAULTS = {
+  background: '#15171c', surface: '#191a1b', overlay: '#20242c', foreground: '#d7dce4',
+  muted: '#8a93a3', border: '#2e3440', accent: '#629bd0', blue: '#6694ff',
+  cyan: '#5fc9dd', magenta: '#c792ea', green: '#98c379', yellow: '#e5c07b',
+  selection: '#35534e', cursor: '#9bc7bc',
+};
+const LABELS = {
+  background: '背景', surface: '面', overlay: '叠加', foreground: '正文', muted: '弱文字', border: '边框',
+  accent: '强调', blue: '标题', cyan: '链接', magenta: '品红', green: '绿', yellow: '黄',
+  selection: '选区', cursor: '光标',
+};
+const PRESETS = {
+  '默认（已调好）': {},
+  '纸白': { background:'#f7f5f0', surface:'#efede6', overlay:'#eceae2', foreground:'#2a2a28', muted:'#7a786f', border:'#d8d4c8', accent:'#3d6df9', blue:'#2b52d8', cyan:'#0f7f96', magenta:'#a03bd1', green:'#3f7d20', yellow:'#9a6b00', selection:'#c9d4f6', cursor:'#2b52d8' },
+  '暖 sepia': { background:'#f3ead8', surface:'#ece2cc', overlay:'#e9dfc6', foreground:'#43382a', muted:'#8a7a5f', border:'#d6c8a8', accent:'#b0562a', blue:'#8a4a1f', cyan:'#206f6b', magenta:'#93306c', green:'#5c7a1e', yellow:'#8f6400', selection:'#e0cfa8', cursor:'#8a4a1f' },
+  '夜紫': { background:'#191420', surface:'#201a29', overlay:'#241d2e', foreground:'#e0dcea', muted:'#948ca6', border:'#352c44', accent:'#b48cf2', blue:'#b48cf2', cyan:'#6fd3e0', magenta:'#f26fb8', green:'#a4d479', yellow:'#e8c07a', selection:'#3d2f55', cursor:'#b48cf2' },
+  '高对比': { background:'#000000', surface:'#101010', overlay:'#161616', foreground:'#ffffff', muted:'#b8b8b8', border:'#4a4a4a', accent:'#ffd400', blue:'#ffd400', cyan:'#00e0ff', magenta:'#ff5fd0', green:'#7dff6a', yellow:'#ffb000', selection:'#333300', cursor:'#ffd400' },
+};
+const root = document.documentElement;
+const rail = document.getElementById('rail');
+const presetSel = document.getElementById('preset');
+const toast = document.getElementById('toast');
+const inputs = new Map();
+let toastTimer;
+function say(m) { toast.textContent = m; toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('show'), 1600); }
+function setToken(k, v) { root.style.setProperty('--wc-' + k, v); }
+function getToken(k) { return (root.style.getPropertyValue('--wc-' + k) || DEFAULTS[k]).trim(); }
+function syncScheme() {
+  const n = parseInt(getToken('background').slice(1), 16);
+  const lum = (0.2126 * (n >> 16 & 255) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255)) / 255;
+  root.style.colorScheme = lum > 0.5 ? 'light' : 'dark';
+}
+function buildRail() {
+  const note = document.createElement('div'); note.className = 'note';
+  note.textContent = '这些是全局 token：shell 把它们写成 --wc-*，editor 与所有插件都读同一套。改这里即改整套主题。';
+  rail.appendChild(note);
+  const g = document.createElement('div'); g.className = 'group';
+  const h = document.createElement('h2'); h.textContent = 'theme token'; g.appendChild(h);
+  for (const k of Object.keys(DEFAULTS)) {
+    const row = document.createElement('div'); row.className = 'row';
+    const label = document.createElement('label'); label.textContent = LABELS[k]; row.appendChild(label);
+    const el = document.createElement('input'); el.type = 'color';
+    const hex = document.createElement('span'); hex.className = 'hex';
+    el.addEventListener('input', () => { setToken(k, el.value); hex.textContent = el.value; if (k === 'background') syncScheme(); });
+    row.appendChild(el); row.appendChild(hex); g.appendChild(row);
+    inputs.set(k, { el, hex });
+  }
+  rail.appendChild(g);
+}
+function syncUI() { for (const [k, { el, hex }] of inputs) { el.value = getToken(k); hex.textContent = getToken(k); } }
+function applyPreset(name) {
+  const vals = { ...DEFAULTS, ...(PRESETS[name] || {}) };
+  for (const [k, v] of Object.entries(vals)) setToken(k, v);
+  syncScheme(); syncUI();
+}
+function hslHex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const to = x => Math.round(255 * x).toString(16).padStart(2, '0');
+  return '#' + to(f(0)) + to(f(8)) + to(f(4));
+}
+function randomize() {
+  const h = Math.floor(Math.random() * 360);
+  const dark = Math.random() < 0.7;
+  const v = dark ? {
+    background: hslHex(h, 20, 9), surface: hslHex(h, 18, 12), overlay: hslHex(h, 17, 14),
+    foreground: hslHex(h, 15, 87), muted: hslHex(h, 10, 62), border: hslHex(h, 15, 25),
+    selection: hslHex(h, 40, 26), cursor: hslHex((h + 210) % 360, 78, 70),
+  } : {
+    background: hslHex(h, 30, 96), surface: hslHex(h, 28, 93), overlay: hslHex(h, 26, 91),
+    foreground: hslHex(h, 20, 16), muted: hslHex(h, 12, 42), border: hslHex(h, 20, 80),
+    selection: hslHex(h, 50, 82), cursor: hslHex((h + 210) % 360, 78, 45),
+  };
+  v.accent = hslHex((h + 210) % 360, 78, dark ? 70 : 45);
+  v.blue = v.accent;
+  v.cyan = hslHex((h + 160) % 360, 68, dark ? 66 : 38);
+  v.magenta = hslHex((h + 300) % 360, 66, dark ? 72 : 45);
+  v.green = hslHex((h + 100) % 360, 55, dark ? 66 : 35);
+  v.yellow = hslHex((h + 45) % 360, 70, dark ? 70 : 42);
+  for (const [k, val] of Object.entries(v)) setToken(k, val);
+  syncScheme(); syncUI(); say('已随机一套全局配色');
+}
+function themeSnippet() {
+  return 'theme: {\n' + Object.keys(DEFAULTS).map(k => `  ${k}: '${getToken(k)}',`).join('\n') + '\n},';
+}
+function cssSnippet() {
+  return ':root {\n' + Object.keys(DEFAULTS).map(k => `  --wc-${k}: ${getToken(k)};`).join('\n') + '\n}\n';
+}
+async function copyTheme() {
+  const text = themeSnippet();
+  try { await navigator.clipboard.writeText(text); }
+  catch { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+  say('已复制 init.ts 的 theme，贴回即全局生效');
+}
+function downloadCSS() {
+  const blob = new Blob([cssSnippet()], { type: 'text/css' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'theme.css';
+  a.click(); URL.revokeObjectURL(a.href); say('已下载 theme.css');
+}
+for (const name of Object.keys(PRESETS)) { const o = document.createElement('option'); o.value = name; o.textContent = name; presetSel.appendChild(o); }
+presetSel.addEventListener('change', () => { applyPreset(presetSel.value); say('已应用预设：' + presetSel.value); });
+document.getElementById('random').addEventListener('click', randomize);
+document.getElementById('reset').addEventListener('click', () => { presetSel.value = '默认（已调好）'; applyPreset(presetSel.value); say('已重置为默认全局主题'); });
+document.getElementById('copy').addEventListener('click', copyTheme);
+document.getElementById('download').addEventListener('click', downloadCSS);
+buildRail();
+applyPreset('默认（已调好）');
+</script>
+</body>
+</html>

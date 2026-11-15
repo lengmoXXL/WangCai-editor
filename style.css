@@ -34,7 +34,7 @@
 .cm-md-h4 { font-size: 1.1em; }
 .cm-md-h5 { font-size: 1em; }
 .cm-md-h6 { font-size: 0.9em; color: var(--wc-muted); }
-.cm-md-bold { font-weight: 700; color: var(--wc-foreground); }
+.cm-md-bold { font-weight: 700; color: color-mix(in srgb, var(--wc-foreground) 80%, light-dark(#000000, #ffffff)); }
 .cm-md-italic { font-style: italic; }
 .cm-md-strike { text-decoration: line-through; color: var(--wc-muted); }
 .cm-md-code { padding: 1px 4px; background: var(--wc-overlay); border-radius: 3px; }
