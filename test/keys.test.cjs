@@ -6,7 +6,7 @@ const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 const answerLine = 'export const answer = 42;';
 const answerBody = `${answerLine}\n`;
-// The one file both cases below open, holding that line.
+// The one file the cases below open, holding that line.
 const openAnswer = (home, page) => showWritten(page, join(home, 'main.ts'), answerBody, answerLine);
 // The press that leaves the field, and the key that moves the cursor once the keys are back: a move that landed in the text
 // instead is how a press that never ended the insert mode shows.
@@ -55,5 +55,22 @@ test('visual mode hides the caret-line highlight that would band across its sele
   await until(async () => (await lineHighlight()) === clear, { timeout: 10000 });
   await page.keyboard.press('Escape');
   await until(async () => (await lineHighlight()) !== clear);
+  assert.deepEqual(errors, []);
+}));
+
+test('tab types two spaces while inserting instead of leaving the editor', { timeout: 120000 }, () => withWindow('wangcai-editor-keys-tab', lists, async ({ home, page, errors }) => {
+  await openAnswer(home, page);
+  await lineBoxes(shownPanel(page)).nth(0).click();
+  await page.keyboard.press('i');
+  await page.keyboard.press('Tab');
+  await until(async () => (await drawnLines(page)).some((line) => line.includes('  ')));
+  assert.ok(!(await drawnLines(page)).some((line) => line.includes('\t')));
+  assert.ok(await editorFocused(page));
+  // Normal mode is not typing: Tab there must not insert anything.
+  await page.keyboard.press('Escape');
+  const before = await drawnLines(page);
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(200);
+  assert.deepEqual(await drawnLines(page), before);
   assert.deepEqual(errors, []);
 }));

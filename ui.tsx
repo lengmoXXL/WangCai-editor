@@ -1,6 +1,7 @@
-import { history as undoHistory } from '@codemirror/commands';
-import { Compartment, EditorState, type Extension } from '@codemirror/state';
-import { EditorView, drawSelection, highlightActiveLine, lineNumbers } from '@codemirror/view';
+import { history as undoHistory, indentMore } from '@codemirror/commands';
+import { indentUnit } from '@codemirror/language';
+import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state';
+import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from '@codemirror/view';
 import { Vim, getCM, vim, type CodeMirrorV } from '@replit/codemirror-vim';
 import { createRoot } from 'react-dom/client';
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
@@ -1063,7 +1064,20 @@ export async function mount(_container: HTMLElement, context: UiContext) {
   // The vim keys over the text, which the page may edit and write back, and the history behind its undo. The selection a
   // visual mode covers is drawn here, because the vim keys blank the browser's own ::selection without drawing one of
   // their own.
-  chrome = [vim(), lineNumbers(), highlightActiveLine(), drawSelection(), undoHistory(), ...editorTheme(profile.theme, font)];
+  // Outside insert mode Tab is not typing: leave it to vim and the shell's focus walk.
+  const tab = Prec.high(keymap.of([{
+    key: 'Tab',
+    run: (view) => {
+      const cm = getCM(view) as CodeMirrorV | undefined;
+      if (cm && cm.state.vim.mode !== 'insert') return false;
+      const { state } = view;
+      if (state.selection.ranges.some((range) => !range.empty)) return indentMore(view);
+      view.dispatch(state.replaceSelection(state.facet(indentUnit)), { scrollIntoView: true, userEvent: 'input' });
+      return true;
+    },
+  }]));
+  chrome = [tab, vim(), lineNumbers(), highlightActiveLine(), drawSelection(), undoHistory(),
+    EditorState.tabSize.of(2), indentUnit.of('  '), ...editorTheme(profile.theme, font)];
   services = new LanguageServices(context);
   for (const [key, history] of Object.entries(await context.ui.request<Record<string, History>>('history'))) histories.set(key, history);
   const offActive = context.global.subscribe<WorkspaceActive | null>('workspace:active', (value) => {
