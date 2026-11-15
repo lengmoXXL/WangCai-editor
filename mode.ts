@@ -6,6 +6,7 @@ import { java } from '@codemirror/lang-java';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
 import { markdown as markdownLang, markdownLanguage } from '@codemirror/lang-markdown';
+import { InlineContext, type InlineParser } from '@lezer/markdown';
 import { python } from '@codemirror/lang-python';
 import { rust } from '@codemirror/lang-rust';
 import { yaml as yamlLang } from '@codemirror/lang-yaml';
@@ -20,7 +21,30 @@ type Language = { id: string; mode: () => Extension };
 const ts: Language = { id: 'typescript', mode: () => javascript({ typescript: true }) };
 const js: Language = { id: 'javascript', mode: javascript };
 const sh: Language = { id: 'shell', mode: () => StreamLanguage.define(shell) };
-const md: Language = { id: 'markdown', mode: () => markdownLang({ base: markdownLanguage }) };
+// CommonMark reads CJK brackets and fullwidth stops as punctuation, which denies a closing ** its right flank when a CJK
+// letter follows it, leaving the stars raw. Read those marks as ordinary characters so CJK bold still closes.
+const flankPunctuation = (ch: string) => {
+  const c = ch.codePointAt(0) ?? 0;
+  const cjk = (c >= 0x3000 && c <= 0x303f) || (c >= 0xff00 && c <= 0xffef);
+  return !cjk && /[\p{S}\p{P}]/u.test(ch);
+};
+const cjkEmphasis: InlineParser = {
+  name: 'Emphasis',
+  parse(cx, next, start) {
+    if (next !== 42 && next !== 95) return -1;
+    let pos = start + 1;
+    while (cx.char(pos) === next) pos++;
+    const before = cx.slice(start - 1, start), after = cx.slice(pos, pos + 1);
+    const pBefore = flankPunctuation(before), pAfter = flankPunctuation(after);
+    const sBefore = /\s|^$/.test(before), sAfter = /\s|^$/.test(after);
+    const left = !sAfter && (!pAfter || sBefore || pBefore);
+    const right = !sBefore && (!pBefore || sAfter || pAfter);
+    const open = left && (next === 42 || !right || pBefore);
+    const close = right && (next === 42 || !left || pAfter);
+    return cx.addDelimiter(next === 95 ? InlineContext.emphasisUnderscore : InlineContext.emphasisAsterisk, start, pos, open, close);
+  },
+};
+const md: Language = { id: 'markdown', mode: () => markdownLang({ base: markdownLanguage, extensions: { parseInline: [cjkEmphasis] } }) };
 const html: Language = { id: 'html', mode: htmlLang };
 const yaml: Language = { id: 'yaml', mode: yamlLang };
 const c: Language = { id: 'c', mode: cppLang };

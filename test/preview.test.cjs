@@ -26,6 +26,16 @@ test('a markdown file opens rendered, and the caret line keeps its syntax', { ti
   assert.deepEqual(errors, []);
 }));
 
+test('a bold run closed against a CJK letter still renders, its stars hidden', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-cjk-bold', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'cjk.md');
+  const line = '**1885 年《伦敦之后》**第一次系统写;**1912 年《猩红瘟疫》**把镜头移开。';
+  await showWritten(page, file, `# Title\n\n${line}\n`, 'Title');
+  await until(async () => (await md(page, 'cm-md-bold').count()) >= 2);
+  // The caret rests on the title, so the CJK line reads clean: both runs closed even though a CJK letter follows each.
+  await until(async () => (await drawnLines(page))[2] === '1885 年《伦敦之后》第一次系统写;1912 年《猩红瘟疫》把镜头移开。');
+  assert.deepEqual(errors, []);
+}));
+
 test('the toggle swaps the rendered page for its source and back', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-toggle', lists, async ({ home, page, errors }) => {
   const file = join(home, 'toggle.md');
   await showWritten(page, file, body, 'Title');
