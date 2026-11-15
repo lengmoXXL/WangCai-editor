@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { lists, showWritten, shownPanel, drawnLines, lineBoxes, cursorAt, tableGrid, tableCells, pickedCells } = require('./editor-ui.cjs');
+const { lists, showWritten, shownPanel, drawnLines, lineBoxes, cursorAt, tableGrid, tableCells, pickedCells, taskBoxes, taskMarkers, taskCentreDelta } = require('./editor-ui.cjs');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 // The header's switch between the rendered page and its source, and the marks the live preview draws.
@@ -60,6 +60,24 @@ test('a task checkbox ticks the task over in the file', { timeout: 120000 }, () 
   await until(async () => (await md(page, 'cm-md-task').count()) > 0);
   await md(page, 'cm-md-task').click();
   await until(() => readFileSync(file, 'utf8').startsWith('- [x] a task'));
+  assert.deepEqual(errors, []);
+}));
+
+test('a task checkbox sits on the text centreline and its source marker reads blue', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-task-align', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'taskalign.md');
+  await showWritten(page, file, '# T\n\n- [x] 视图\n- [ ] item2\n', 'T');
+  await lineBoxes(shownPanel(page)).nth(0).click();
+  await until(async () => (await taskBoxes(shownPanel(page)).count()) > 0);
+  const delta = await taskCentreDelta(shownPanel(page));
+  assert.ok(delta <= 0.5, `checkbox off the text centreline by ${delta}px`);
+  // The caret line reads the marker as source; its hue is the heading blue, not the numeric yellow.
+  await lineBoxes(shownPanel(page)).nth(3).click();
+  await until(async () => (await taskMarkers(shownPanel(page)).count()) > 0);
+  const [marker, heading] = await Promise.all([
+    taskMarkers(shownPanel(page)).last().evaluate((el) => getComputedStyle(el).color),
+    md(page, 'cm-md-h1').evaluate((el) => getComputedStyle(el).color),
+  ]);
+  assert.equal(marker, heading);
   assert.deepEqual(errors, []);
 }));
 

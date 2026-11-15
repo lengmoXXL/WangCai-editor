@@ -53,7 +53,7 @@
 .cm-md-image-name { color: var(--wc-muted); }
 .cm-md-image-missing { opacity: 0.6; }
 .cm-md-image-missing .cm-md-image-name { text-decoration: line-through; }
-.cm-md-task { accent-color: var(--wc-accent); width: 13px; height: 13px; margin: 0 5px 0 0; vertical-align: middle; cursor: pointer; }
+.cm-md-task { accent-color: var(--wc-accent); width: 1em; height: 1em; margin: 0 5px 0 0; vertical-align: -0.15em; cursor: pointer; }
 .cm-md-table { border-collapse: collapse; margin: 6px 0; color: var(--wc-foreground); }
 .cm-md-table th, .cm-md-table td { padding: 4px 8px; border: 1px solid var(--wc-border); }
 .cm-md-table th { background: var(--wc-overlay); font-weight: 700; }

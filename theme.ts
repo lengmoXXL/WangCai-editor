@@ -35,7 +35,9 @@ export function editorTheme(theme: Theme, font: Font) {
   const tokens = HighlightStyle.define([
     { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: theme.muted },
     { tag: [tags.string, tags.special(tags.string), tags.regexp], color: theme.green },
-    { tag: [tags.number, tags.bool, tags.null, tags.atom], color: theme.yellow },
+    { tag: [tags.number, tags.bool, tags.null], color: theme.yellow },
+    // The task marker "[ ]" is an atom; it reads with the heading blue rather than the numeric yellow.
+    { tag: tags.atom, color: theme.blue },
     { tag: [tags.keyword, tags.modifier, tags.operatorKeyword, tags.controlKeyword, tags.definitionKeyword, tags.moduleKeyword], color: theme.magenta },
     { tag: [tags.typeName, tags.className, tags.namespace, tags.tagName], color: theme.cyan },
     { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.macroName], color: theme.blue },

@@ -145,6 +145,19 @@ const tableGrid = (scope) => codeSurface(scope).locator('.cm-md-table');
 const tableCells = (scope) => tableGrid(scope).locator('td');
 const pickedCells = (scope) => tableGrid(scope).locator('.cm-md-table-picked');
 
+const taskBoxes = (scope) => codeSurface(scope).locator('.cm-md-task');
+const taskMarkers = (scope) => codeSurface(scope).locator('span').filter({ hasText: /^\[[ x]\]$/ });
+
+// How far a drawn checkbox sits off its line's text centreline, in pixels: the line box and its last text node are
+// located here, so a case only reads the number.
+const taskCentreDelta = (scope) => taskBoxes(scope).first().evaluate((box) => {
+  const b = box.getBoundingClientRect();
+  const r = document.createRange();
+  r.selectNodeContents(box.closest('.cm-line').lastChild);
+  const t = r.getBoundingClientRect();
+  return Math.abs((b.y + b.height / 2) - (t.y + t.height / 2));
+});
+
 // Whether an editor in this window is holding the keyboard.
 const editorFocused = (page) => codeSurface(page).evaluateAll((scopes) => scopes.some((scope) => scope.contains(document.activeElement)));
 
@@ -327,6 +340,9 @@ module.exports = {
   tableGrid,
   tableCells,
   pickedCells,
+  taskBoxes,
+  taskMarkers,
+  taskCentreDelta,
   editorFocused,
   dirtyMark,
   typeInto,
