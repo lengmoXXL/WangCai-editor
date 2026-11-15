@@ -9,8 +9,8 @@ import { machineKey, type FileClick, type History, type ImageBytes, type LspClos
 // on show reads, which the main process has no view of.
 export const keys = {
   '<leader>e': { global: true, insert: true, desc: '打开编辑器视图', event: 'core:show-view', data: { plugin: 'editor' } },
-  '<leader>gp': { insert: true, desc: '在 preview 里打开当前文件', event: 'editor:preview' },
-  '<leader>gf': { insert: true, desc: '在 files 里打开文件所在的目录', event: 'editor:reveal' },
+  '<leader>gp': { insert: true, desc: ['goto', '在 preview 里打开当前文件'], event: 'editor:preview' },
+  '<leader>gf': { insert: true, desc: ['goto', '在 files 里打开文件所在的目录'], event: 'editor:reveal' },
 };
 
 // Fields this plugin takes from init.ts.
