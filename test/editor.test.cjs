@@ -86,7 +86,7 @@ test('the leader keys hand the file on show to the preview, and its directory to
   assert.deepEqual(errors, []);
 }));
 
-test('a selection is painted on the line the cursor is on, which keeps a fill of its own', { timeout: 120000 }, () => withWindow('wangcai-editor-selection', lists, async ({ home, page, errors }) => {
+test('a selection is painted on the line the cursor is on, which gives up its own fill', { timeout: 120000 }, () => withWindow('wangcai-editor-selection', lists, async ({ home, page, errors }) => {
   // The colour a layer that paints nothing reports, which is what "painted" is measured against: a layer painting none
   // lets what is beneath it show.
   const noPaint = 'rgba(0, 0, 0, 0)';
@@ -129,12 +129,12 @@ test('a selection is painted on the line the cursor is on, which keeps a fill of
   const [paintedOff, paintedOn] = await paintedAt([offLine, onLine]);
   assert.ok(paintedOff.name.split(' ').includes(selectionClass), `painted ${JSON.stringify(paintedOff)}`);
   assert.deepEqual(paintedOn, paintedOff);
-  // The line the cursor is on keeps a colour of its own as well, which the selection is painted over.
-  const [fill, ground] = await activeLineBox(page).evaluate((line) => [
-    getComputedStyle(line, '::before').backgroundColor,
-    getComputedStyle(line.closest('.cm-editor')).backgroundColor,
-  ]);
-  assert.ok(fill !== noPaint && fill !== ground, `the line the cursor is on paints ${fill} over ${ground}`);
+  // The drag is a visual selection, and visual mode drops the caret-line fill so the selection reads as one band; leaving
+  // visual mode brings the fill back.
+  const lineFill = () => activeLineBox(page).evaluate((line) => getComputedStyle(line, '::before').backgroundColor);
+  await until(async () => (await lineFill()) === noPaint);
+  await page.keyboard.press('Escape');
+  await until(async () => (await lineFill()) !== noPaint);
   assert.deepEqual(errors, []);
 }));
 

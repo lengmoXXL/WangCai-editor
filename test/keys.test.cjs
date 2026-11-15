@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { join } = require('node:path');
-const { drawnLines, editorFocused, lineBoxes, lists, shownPanel, showWritten } = require('./editor-ui.cjs');
+const { activeLineBox, drawnLines, editorFocused, lineBoxes, lists, selectionMarks, shownPanel, showWritten } = require('./editor-ui.cjs');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 const answerLine = 'export const answer = 42;';
@@ -43,3 +43,17 @@ test(`the editor keeps the keyboard through Escapes, and a ${leaveKeys} leaves i
   assert.deepEqual(errors, []);
 }));
 
+test('visual mode hides the caret-line highlight that would band across its selection', { timeout: 120000 }, () => withWindow('wangcai-editor-visual-line', lists, async ({ home, page, errors }) => {
+  await openAnswer(home, page);
+  await until(() => editorFocused(page));
+  const lineHighlight = () => activeLineBox(shownPanel(page)).first().evaluate((el) => getComputedStyle(el, '::before').backgroundColor);
+  const clear = 'rgba(0, 0, 0, 0)';
+  assert.notEqual(await lineHighlight(), clear, 'normal mode keeps the caret-line highlight');
+  await page.keyboard.press('v');
+  await page.keyboard.press('l');
+  await until(async () => (await selectionMarks(shownPanel(page)).count()) > 0);
+  await until(async () => (await lineHighlight()) === clear, { timeout: 10000 });
+  await page.keyboard.press('Escape');
+  await until(async () => (await lineHighlight()) !== clear);
+  assert.deepEqual(errors, []);
+}));

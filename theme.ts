@@ -24,6 +24,9 @@ export function editorTheme(theme: Theme, font: Font) {
     // Layers below the text count down from -1 in the scroller's stacking context — the selection's is -2 — while the ones
     // above it count down from 150, so -10 sits under the selection and still leaves room for the layers a plugin brings.
     '.cm-activeLine::before': { content: '""', position: 'absolute', inset: '0', zIndex: '-10', backgroundColor: theme.overlay },
+    // A selection — visual mode always draws one — is the highlight the caret's line should carry alone; the line's own
+    // box would band across it, so the box stands down for as long as a selection is on screen.
+    '&:has(.cm-selectionBackground) .cm-activeLine::before': { backgroundColor: 'transparent' },
     '.cm-scroller::-webkit-scrollbar': { width: '10px', height: '10px' },
     '.cm-scroller::-webkit-scrollbar-thumb': { backgroundColor: theme.muted, borderRadius: '5px' },
     '.cm-scroller::-webkit-scrollbar-thumb:hover': { backgroundColor: theme.foreground },
