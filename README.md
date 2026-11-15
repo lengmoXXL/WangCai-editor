@@ -25,7 +25,7 @@ tabs: [
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `family` | `"DejaVuSansM Nerd Font Mono", monospace` | 面板与代码的字体 |
-| `size` | `12` | 代码的字号（面板文字固定 12px） |
+| `size` | `13` | 代码的字号（面板文字固定 12px） |
 | `lineHeight` | 编辑器默认 | 行高，按 `size` 的倍数算 |
 
 ## 语法高亮
