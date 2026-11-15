@@ -57,6 +57,8 @@
 .cm-md-table { border-collapse: collapse; margin: 6px 0; color: var(--wc-foreground); }
 .cm-md-table th, .cm-md-table td { padding: 4px 8px; border: 1px solid var(--wc-border); }
 .cm-md-table th { background: var(--wc-overlay); font-weight: 700; }
+/* A drag across the grid picks cells; CodeMirror hides the browser's own selection, so the pick paints itself. */
+.cm-md-table-picked { background: var(--wc-selection); }
 .cm-md-table-hidden { height: 0; min-height: 0; padding: 0; overflow: hidden; font-size: 0; line-height: 0; }
 .cm-md-table-src { display: none; }
 .cm-md-frontmatter-hidden { height: 0; min-height: 0; padding: 0; overflow: hidden; font-size: 0; line-height: 0; }

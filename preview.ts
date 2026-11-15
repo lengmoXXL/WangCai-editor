@@ -122,6 +122,49 @@ function appendInline(parent: HTMLElement, text: string) {
   if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
 }
 
+// The drawn grid is a widget: CodeMirror owns neither its selection nor its copy, and it hides the browser's native
+// selection inside the content. So a drag picks a rectangle of cells, painted here, and Copy lifts it as tab-separated
+// text. One pick at a time, held outside the widget so a redraw of the grid does not lose it.
+let picked: { table: HTMLTableElement; from: [number, number]; to: [number, number] } | null = null;
+
+const clearPick = () => {
+  if (picked) for (const row of Array.from(picked.table.rows)) for (const cell of Array.from(row.cells)) cell.classList.remove('cm-md-table-picked');
+  picked = null;
+};
+
+const bounds = (from: [number, number], to: [number, number]): [number, number, number, number] =>
+  [Math.min(from[0], to[0]), Math.max(from[0], to[0]), Math.min(from[1], to[1]), Math.max(from[1], to[1])];
+
+const paintPick = () => {
+  if (!picked) return;
+  const [r0, r1, c0, c1] = bounds(picked.from, picked.to);
+  Array.from(picked.table.rows).forEach((row, r) => Array.from(row.cells).forEach((cell, c) => {
+    cell.classList.toggle('cm-md-table-picked', r >= r0 && r <= r1 && c >= c0 && c <= c1);
+  }));
+};
+
+const pickText = () => {
+  if (!picked) return '';
+  const [r0, r1, c0, c1] = bounds(picked.from, picked.to);
+  return Array.from(picked.table.rows).slice(r0, r1 + 1)
+    .map((row) => Array.from(row.cells).slice(c0, c1 + 1).map((cell) => cell.textContent ?? '').join('\t'))
+    .join('\n');
+};
+
+document.addEventListener('copy', (event) => {
+  if (!picked || !picked.table.isConnected) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.clipboardData?.setData('text/plain', pickText());
+}, true);
+document.addEventListener('mousedown', (event) => {
+  if (picked && !picked.table.contains(event.target as Node)) clearPick();
+}, true);
+document.addEventListener('keydown', (event) => {
+  // Moving the caret or typing leaves the grid behind; Copy still reaches the pick, modifiers alone do not.
+  if (!((event.metaKey || event.ctrlKey) && event.key === 'c') && !['Meta', 'Control', 'Shift', 'Alt'].includes(event.key)) clearPick();
+}, true);
+
 // A table is drawn as a grid below the lines that name it, which keep their line boxes so vertical motion walks them;
 // header and alignment are read from the delimiter row, the way the preview tab draws GFM tables.
 class TableWidget extends WidgetType {
@@ -159,6 +202,30 @@ class TableWidget extends WidgetType {
       tbody.appendChild(tr);
     }
     table.append(thead, tbody);
+    const cellOf = (target: EventTarget | null) => {
+      const el = target instanceof Element ? target.closest('td, th') : null;
+      return el && table.contains(el) ? (el as HTMLTableCellElement) : null;
+    };
+    table.addEventListener('mousedown', (event) => {
+      const cell = cellOf(event.target);
+      if (!cell || event.button !== 0) return;
+      // Keep CodeMirror's caret out of the table, so the grid stays drawn while it is picked.
+      event.preventDefault();
+      event.stopPropagation();
+      const at = (c: HTMLTableCellElement): [number, number] => [(c.parentElement as HTMLTableRowElement).rowIndex, c.cellIndex];
+      picked = { table, from: at(cell), to: at(cell) };
+      paintPick();
+      const move = (ev: MouseEvent) => {
+        const over = cellOf(ev.target);
+        if (over && picked) { picked.to = at(over); paintPick(); }
+      };
+      const up = () => {
+        window.removeEventListener('mousemove', move);
+        window.removeEventListener('mouseup', up);
+      };
+      window.addEventListener('mousemove', move);
+      window.addEventListener('mouseup', up);
+    });
     return table;
   }
   eq(other: TableWidget) { return other.text === this.text && other.first === this.first; }

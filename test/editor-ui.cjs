@@ -140,6 +140,11 @@ const selectionClass = 'cm-selectionBackground';
 // The marks a selection is drawn as, one per line it covers.
 const selectionMarks = (scope) => codeSurface(scope).locator(`.${selectionClass}`);
 
+// The drawn markdown grid and its cells: a widget, so a drag picks cells the widget paints itself, not CodeMirror's marks.
+const tableGrid = (scope) => codeSurface(scope).locator('.cm-md-table');
+const tableCells = (scope) => tableGrid(scope).locator('td');
+const pickedCells = (scope) => tableGrid(scope).locator('.cm-md-table-picked');
+
 // Whether an editor in this window is holding the keyboard.
 const editorFocused = (page) => codeSurface(page).evaluateAll((scopes) => scopes.some((scope) => scope.contains(document.activeElement)));
 
@@ -319,6 +324,9 @@ module.exports = {
   landedOn,
   selectionClass,
   selectionMarks,
+  tableGrid,
+  tableCells,
+  pickedCells,
   editorFocused,
   dirtyMark,
   typeInto,

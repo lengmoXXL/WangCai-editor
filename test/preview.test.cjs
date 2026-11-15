@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { lists, showWritten, shownPanel, drawnLines, lineBoxes, cursorAt } = require('./editor-ui.cjs');
+const { lists, showWritten, shownPanel, drawnLines, lineBoxes, cursorAt, tableGrid, tableCells, pickedCells } = require('./editor-ui.cjs');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 // The header's switch between the rendered page and its source, and the marks the live preview draws.
@@ -92,6 +92,26 @@ test('a table is drawn as a bordered grid with alignment and inline marks', { ti
   assert.equal(await table.locator('td').nth(1).evaluate((el) => el.style.textAlign), 'right');
   assert.ok(await table.locator('td strong.cm-md-bold').count() > 0);
   assert.ok(await table.locator('td code.cm-md-code').count() > 0);
+  assert.deepEqual(errors, []);
+}));
+
+test('a drag across the drawn table selects it visibly and copies it', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-table-copy', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'tablecopy.md');
+  await showWritten(page, file, '| 大类 | 数量 |\n| --- | --- |\n| 核战 | 21 |\n| 瘟疫 | 22 |\n\ntail\n', 'tail');
+  await lineBoxes(shownPanel(page)).nth(5).click();
+  await until(async () => (await tableGrid(shownPanel(page)).count()) > 0);
+  const cells = tableCells(shownPanel(page));
+  const from = await cells.nth(0).boundingBox();
+  const to = await cells.nth(3).boundingBox();
+  await page.mouse.move(from.x + 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width - 2, to.y + to.height / 2, { steps: 12 });
+  await page.mouse.up();
+  const wanted = '核战\t21\n瘟疫\t22';
+  await until(async () => (await pickedCells(shownPanel(page)).count()) === 4);
+  await page.evaluate(() => navigator.clipboard.writeText(''));
+  await page.keyboard.press('Meta+c');
+  await until(async () => (await page.evaluate(() => navigator.clipboard.readText())) === wanted);
   assert.deepEqual(errors, []);
 }));
 
