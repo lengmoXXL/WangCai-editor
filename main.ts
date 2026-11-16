@@ -17,7 +17,7 @@ export const keys = {
 export const config = {
   font: {
     family: { type: 'string', default: '"DejaVuSansM Nerd Font Mono", monospace' },
-    size: { type: 'number', default: 13 },
+    size: { type: 'number', default: 12 },
     lineHeight: { type: 'number' },
   },
   // Per-language entries from init.ts, keyed by the language this plugin reads a file as: a command or markers replaces
