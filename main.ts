@@ -116,8 +116,9 @@ export function activate(context: MainContext) {
     return connection.subprocess.exec(located.program, args, { cwd });
   };
 
-  // The server a language and root share, started on this connection or handed back from the one already running or on its
-  // way: two views that ask for a file at the same moment share one spawn.
+  // The server a command and root share, started on this connection or handed back from the one already running or on its
+  // way: two views that ask for a file at the same moment share one spawn, and two languages that run the same program
+  // share one server — a server that keeps one index per project (clice) serves nothing in a second process of itself.
   const startServer = async (connection: MachineConnection, { machine, path, language }: OpenOptions, keep: () => void): Promise<LspSession | null> => {
     const spec = serverSpec(language);
     if (!spec) return null;
@@ -126,7 +127,7 @@ export function activate(context: MainContext) {
     if (!located) throw new Error(`未找到 ${spec.commands.map(([program]) => program).join(' / ')}`);
     const root = await findRoot(connection, directory, spec.markers);
     const name = posix.basename(located.program);
-    const session = `${machineKey(machine)}|${language}|${root}`;
+    const session = `${machineKey(machine)}|${JSON.stringify([located.program, ...located.args])}|${root}`;
     let start = starts.get(session);
     if (!sessions.has(session) && !start) {
       start = (async () => {
