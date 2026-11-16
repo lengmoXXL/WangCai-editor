@@ -1,5 +1,6 @@
 import { forceParsing, syntaxTree } from '@codemirror/language';
-import { Compartment, Facet, Prec, type EditorState, type Range } from '@codemirror/state';
+import { Compartment, Facet, Prec, type EditorState, type Range, type Text } from '@codemirror/state';
+import type { SyntaxNode } from '@lezer/common';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { getCM } from '@replit/codemirror-vim';
 
@@ -101,26 +102,41 @@ class CodeLanguageWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
-// A table cell keeps the inline marks the rest of the page draws, built as text nodes so nothing in the file can inject
-// markup of its own.
-const inlineToken = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(~~[^~]+~~)|(\[[^\]]*\]\([^)\s]+\))/g;
-function appendInline(parent: HTMLElement, text: string) {
-  let last = 0;
-  for (const m of text.matchAll(inlineToken)) {
-    const at = m.index ?? 0;
-    if (at > last) parent.appendChild(document.createTextNode(text.slice(last, at)));
-    const tok = m[0];
-    let el: HTMLElement;
-    if (tok.startsWith('`')) { el = document.createElement('code'); el.className = 'cm-md-code'; el.textContent = tok.slice(1, -1); }
-    else if (tok.startsWith('**')) { el = document.createElement('strong'); el.className = 'cm-md-bold'; el.textContent = tok.slice(2, -2); }
-    else if (tok.startsWith('~~')) { el = document.createElement('span'); el.className = 'cm-md-strike'; el.textContent = tok.slice(2, -2); }
-    else if (tok.startsWith('*')) { el = document.createElement('em'); el.className = 'cm-md-italic'; el.textContent = tok.slice(1, -1); }
-    else { el = document.createElement('span'); el.className = 'cm-md-link'; el.textContent = /^\[([^\]]*)\]/.exec(tok)![1]; }
-    parent.appendChild(el);
-    last = at + tok.length;
+type Seg = { text: string; cls?: string };
+
+// Which preview class an inline node wears, the span of its content, and the span the whole mark consumes: one place
+// the page's main loop and a table cell both read, so the vocabulary and the mark boundaries live once.
+const inlineMark = (node: SyntaxNode): { cls: string; from: number; to: number; start: number; end: number } | null => {
+  const cls = node.name === 'StrongEmphasis' ? 'cm-md-bold' : node.name === 'Emphasis' ? 'cm-md-italic'
+    : node.name === 'Strikethrough' ? 'cm-md-strike' : node.name === 'InlineCode' ? 'cm-md-code' : undefined;
+  if (cls) {
+    const open = node.firstChild, close = node.lastChild;
+    return open && close && open !== close ? { cls, from: open.to, to: close.from, start: open.from, end: close.to } : null;
   }
-  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
-}
+  if (node.name === 'Link') {
+    const marks = node.getChildren('LinkMark');
+    return marks.length >= 2 ? { cls: 'cm-md-link', from: marks[0].to, to: marks[1].from, start: node.from, end: node.to } : null;
+  }
+  return null;
+};
+
+// A table cell's inline marks, read from the syntax tree the page already parses rather than re-parsed by hand: text
+// between marks stays plain, and an escaped pipe belongs to the cell instead of cutting it in two.
+const cellSegs = (cell: SyntaxNode, doc: Text): Seg[] => {
+  const segs: Seg[] = [];
+  let last = cell.from;
+  const plain = (to: number) => { if (to > last) segs.push({ text: doc.sliceString(last, to) }); };
+  cell.cursor().iterate((n) => {
+    const m = inlineMark(n.node);
+    if (!m) return;
+    plain(m.start);
+    segs.push({ text: doc.sliceString(m.from, m.to), cls: m.cls });
+    last = m.end;
+    return false;
+  });
+  plain(cell.to);
+  return segs.map((s) => ({ ...s, text: s.text.replace(/\\\|/g, '|') }));
+};
 
 // The drawn grid is a widget: CodeMirror owns neither its selection nor its copy, and it hides the browser's native
 // selection inside the content. So a drag picks a rectangle of cells, painted here, and Copy lifts it as tab-separated
@@ -166,40 +182,35 @@ document.addEventListener('keydown', (event) => {
 }, true);
 
 // A table is drawn as a grid below the lines that name it, which keep their line boxes so vertical motion walks them;
-// header and alignment are read from the delimiter row, the way the preview tab draws GFM tables.
+// the header is the TableHeader node and alignment the delimiter row, the way the preview tab draws GFM tables.
 class TableWidget extends WidgetType {
-  constructor(readonly text: string, readonly first: number) { super(); }
+  constructor(readonly rows: { header: boolean; cells: Seg[][] }[], readonly aligns: string[], readonly first: number) { super(); }
   toDOM() {
-    const lines = this.text.split('\n').filter((l) => l.trim() !== '');
-    const row = (l: string) => {
-      let s = l.trim();
-      if (s.startsWith('|')) s = s.slice(1);
-      if (s.endsWith('|')) s = s.slice(0, -1);
-      return s.split('|').map((c) => c.trim());
-    };
     const align = (d: string) => {
       const left = d.startsWith(':'), right = d.endsWith(':');
       return left && right ? 'center' : right ? 'right' : left ? 'left' : '';
     };
-    const delim = lines[1] ? row(lines[1]) : [];
-    const cell = (tag: 'th' | 'td', c: string, i: number) => {
+    const cell = (tag: 'th' | 'td', segs: Seg[], i: number) => {
       const el = document.createElement(tag);
-      const a = align(delim[i] || '');
+      const a = align(this.aligns[i] || '');
       if (a) el.style.textAlign = a;
-      appendInline(el, c);
+      for (const s of segs) {
+        if (!s.cls) { el.appendChild(document.createTextNode(s.text)); continue; }
+        const mark = document.createElement(s.cls === 'cm-md-code' ? 'code' : s.cls === 'cm-md-bold' ? 'strong' : s.cls === 'cm-md-italic' ? 'em' : 'span');
+        mark.className = s.cls;
+        mark.textContent = s.text;
+        el.appendChild(mark);
+      }
       return el;
     };
     const table = document.createElement('table');
     table.className = 'cm-md-table';
     const thead = document.createElement('thead');
-    const hr = document.createElement('tr');
-    row(lines[0]).forEach((c, i) => hr.appendChild(cell('th', c, i)));
-    thead.appendChild(hr);
     const tbody = document.createElement('tbody');
-    for (const l of lines.slice(2)) {
+    for (const row of this.rows) {
       const tr = document.createElement('tr');
-      row(l).forEach((c, i) => tr.appendChild(cell('td', c, i)));
-      tbody.appendChild(tr);
+      row.cells.forEach((segs, i) => tr.appendChild(cell(row.header ? 'th' : 'td', segs, i)));
+      (row.header ? thead : tbody).appendChild(tr);
     }
     table.append(thead, tbody);
     const cellOf = (target: EventTarget | null) => {
@@ -228,7 +239,7 @@ class TableWidget extends WidgetType {
     });
     return table;
   }
-  eq(other: TableWidget) { return other.text === this.text && other.first === this.first; }
+  eq(other: TableWidget) { return other.first === this.first && other.aligns.join() === this.aligns.join() && JSON.stringify(other.rows) === JSON.stringify(this.rows); }
   ignoreEvent() { return true; }
 }
 
@@ -352,27 +363,13 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
         if (last.number > first.number) syntax(last.from, last.to);
         return false;
       }
-      if (name === 'StrongEmphasis' || name === 'Emphasis' || name === 'Strikethrough' || name === 'InlineCode') {
-        const open = node.node.firstChild;
-        const close = node.node.lastChild;
-        if (open && close && open !== close) {
-          const cls = name === 'StrongEmphasis' ? 'cm-md-bold'
-            : name === 'Emphasis' ? 'cm-md-italic'
-            : name === 'Strikethrough' ? 'cm-md-strike' : 'cm-md-code';
-          mark(open.to, close.from, cls);
+      if (name === 'StrongEmphasis' || name === 'Emphasis' || name === 'Strikethrough' || name === 'InlineCode' || name === 'Link') {
+        const m = inlineMark(node.node);
+        if (m) {
+          mark(m.from, m.to, m.cls);
+          if (name === 'Link') { syntax(m.start, m.from); syntax(m.to, m.end); }
         }
-        return;
-      }
-      if (name === 'Link') {
-        const marks = node.node.getChildren('LinkMark');
-        if (marks.length >= 2) {
-          const open = marks[0];
-          const close = marks[1];
-          mark(open.to, close.from, 'cm-md-link');
-          syntax(from, open.to);
-          syntax(close.from, to);
-        }
-        return false;
+        return name === 'Link' ? false : undefined;
       }
       if (name === 'Image') {
         const text = doc.sliceString(from, to);
@@ -422,8 +419,14 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
           if (l === lastLine) ranges.push({ from: ln.from, to: ln.to, value: Decoration.mark({ class: 'cm-md-table-src' }) });
           else ranges.push({ from: ln.from, to: ln.from, value: Decoration.line({ class: 'cm-md-table-hidden' }) });
         }
+        const rows: { header: boolean; cells: Seg[][] }[] = [];
+        for (const row of [...node.node.getChildren('TableHeader'), ...node.node.getChildren('TableRow')]) {
+          rows.push({ header: row.name === 'TableHeader', cells: row.getChildren('TableCell').map((c) => cellSegs(c, doc)) });
+        }
+        const delim = node.node.getChildren('TableDelimiter').find((c) => doc.lineAt(c.from).number === firstLine + 1);
+        const aligns = delim ? doc.sliceString(delim.from, delim.to).split('|').map((s) => s.trim()).filter((s) => s !== '') : [];
         const last = doc.line(lastLine).to;
-        ranges.push({ from: last, to: last, value: Decoration.widget({ widget: new TableWidget(doc.sliceString(from, last), firstLine), side: 1 }) });
+        ranges.push({ from: last, to: last, value: Decoration.widget({ widget: new TableWidget(rows, aligns, firstLine), side: 1 }) });
         return false;
       }
       if (name === 'HorizontalRule') {

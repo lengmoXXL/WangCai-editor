@@ -113,6 +113,19 @@ test('a table is drawn as a bordered grid with alignment and inline marks', { ti
   assert.deepEqual(errors, []);
 }));
 
+test('a table cell keeps an escaped pipe and reads its inline marks from the tree', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-table-tree', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'tabletree.md');
+  await showWritten(page, file, '| a | b |\n| --- | --- |\n| p\\|q | **x** |\n\ntail\n', 'tail');
+  await lineBoxes(shownPanel(page)).nth(4).click();
+  await until(async () => (await tableGrid(shownPanel(page)).count()) > 0);
+  const cells = tableCells(shownPanel(page));
+  assert.equal(await cells.count(), 2);
+  assert.equal(await cells.nth(0).innerText(), 'p|q');
+  assert.ok(await cells.nth(1).locator('strong.cm-md-bold').count() > 0);
+  assert.equal(await cells.nth(1).innerText(), 'x');
+  assert.deepEqual(errors, []);
+}));
+
 test('a drag across the drawn table selects it visibly and copies it', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-table-copy', lists, async ({ home, page, errors }) => {
   const file = join(home, 'tablecopy.md');
   await showWritten(page, file, '| 大类 | 数量 |\n| --- | --- |\n| 核战 | 21 |\n| 瘟疫 | 22 |\n\ntail\n', 'tail');
