@@ -158,9 +158,6 @@ const taskCentreDelta = (scope) => taskBoxes(scope).first().evaluate((box) => {
   return Math.abs((b.y + b.height / 2) - (t.y + t.height / 2));
 });
 
-const codeBlockHeader = (scope) => codeSurface(scope).locator('.cm-codeblock-header');
-const codeCopyButton = (scope) => codeSurface(scope).locator('.cm-codeblock-copy');
-const codeSourceToggle = (scope) => codeSurface(scope).locator('.cm-codeblock-toggle');
 
 const clearClipboard = (page) => page.evaluate(() => navigator.clipboard.writeText(''));
 const clipboardText = (page) => page.evaluate(() => navigator.clipboard.readText());
@@ -351,9 +348,6 @@ module.exports = {
   taskBoxes,
   taskMarkers,
   taskCentreDelta,
-  codeBlockHeader,
-  codeCopyButton,
-  codeSourceToggle,
   clearClipboard,
   clipboardText,
   editorFocused,

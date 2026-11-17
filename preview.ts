@@ -3,6 +3,7 @@ import { Compartment, Facet, Prec, type EditorState, type Range, type Text } fro
 import type { SyntaxNode } from '@lezer/common';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { getCM } from '@replit/codemirror-vim';
+import { common, createLowlight } from 'lowlight';
 
 // The channel a local image's bytes come through: the page cannot reach the machine's disk for an <img> of its own, so
 // each view is handed a resolver turning the path a note names into an address the picture can load.
@@ -274,6 +275,45 @@ class FrontmatterWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+const lowlight = createLowlight(common);
+type Hast = { type: string; value?: string; properties?: { className?: string[] }; children?: Hast[] };
+const spanCache = new Map<string, { cls: string; from: number; to: number }[]>();
+// highlight.js spans for a code string, cached by language and text: the render pass runs on every selection change, and
+// re-highlighting the same visible code each time would pay for parsing it again.
+function codeSpans(language: string, code: string) {
+  const key = language + '\0' + code;
+  const hit = spanCache.get(key);
+  if (hit) return hit;
+  const spans: { cls: string; from: number; to: number }[] = [];
+  if (language && lowlight.registered(language)) {
+    let at = 0;
+    const walk = (node: Hast, cls?: string) => {
+      if (node.type === 'text') {
+        const len = (node.value ?? '').length;
+        if (cls && len) spans.push({ cls, from: at, to: at + len });
+        at += len;
+      } else for (const child of node.children ?? []) walk(child, node.properties?.className?.join(' ') ?? cls);
+    };
+    walk(lowlight.highlight(language, code) as Hast);
+  }
+  spanCache.set(key, spans);
+  return spans;
+}
+
+
+// The language a fenced code block names, kept at the left of the box's first row where the opening fence was.
+class CodeLangWidget extends WidgetType {
+  constructor(readonly language: string) { super(); }
+  toDOM() {
+    const el = document.createElement('span');
+    el.className = 'cm-md-code-lang';
+    el.textContent = this.language;
+    return el;
+  }
+  eq(other: CodeLangWidget) { return other.language === this.language; }
+  ignoreEvent() { return true; }
+}
+
 const headingSize = /^ATXHeading([1-6])$/;
 
 // What the view draws: the markdown rendered inline, with the raw syntax of every line the caret or a selection rests on
@@ -377,19 +417,31 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
         for (let l = first; l <= last; l += 1) line(doc.line(l).from, 'cm-md-quote');
         return;
       }
-      // The community codeBlockField reads FencedCode only, in inline mode: it swaps the two fences for a header (language,
-      // Copy, MD) and a footer and keeps the code as editable text lines. An indented CodeBlock has no fences to swap, so it
-      // keeps the box this pass draws.
-      if (name === 'FencedCode') return false;
-      if (name === 'CodeBlock') {
+      // A code block reads as raw source while the caret or a selection rests anywhere in it. Outside, a named fence keeps
+      // its language as the box's top row, ruled off from the code; an unnamed fence hides both fence rows, and an indented
+      // block boxes every line. The highlight is marked on top of the box's opaque background.
+      if (name === 'FencedCode' || name === 'CodeBlock') {
+        if (revealed(from, to)) return false;
         const first = doc.lineAt(from).number;
         const last = doc.lineAt(to).number;
+        const info = name === 'FencedCode' ? node.node.getChild('CodeInfo') : null;
+        const language = info ? doc.sliceString(info.from, info.to).trim().split(/\s+/)[0] : '';
+        const text = name === 'FencedCode' ? node.node.getChild('CodeText') : null;
+        const codeFrom = text ? text.from : from;
+        const codeTo = text ? text.to : to;
+        const boxFrom = doc.lineAt(codeFrom).number;
+        const boxTo = doc.lineAt(codeTo).number;
         for (let l = first; l <= last; l += 1) {
+          const ln = doc.line(l);
+          if (name === 'FencedCode' && (l === last || (l === first && !language))) { syntax(ln.from, ln.to); continue; }
           let cls = 'cm-md-codeblock';
-          if (l === first) cls += ' cm-md-codeblock-top';
-          if (l === last) cls += ' cm-md-codeblock-bottom';
-          line(doc.line(l).from, cls);
+          if (l === first) cls += ' cm-md-codeblock-top' + (name === 'FencedCode' ? ' cm-md-codeblock-lang' : '');
+          else if (l === boxFrom) cls += language ? ' cm-md-codeblock-start' : ' cm-md-codeblock-top';
+          if (l === boxTo) cls += ' cm-md-codeblock-bottom';
+          line(ln.from, cls);
+          if (name === 'FencedCode' && l === first) syntax(ln.from, ln.to, new CodeLangWidget(language));
         }
+        for (const span of codeSpans(language, doc.sliceString(codeFrom, codeTo))) ranges.push({ from: codeFrom + span.from, to: codeFrom + span.to, value: Decoration.mark({ class: span.cls }) });
         return false;
       }
       if (name === 'Table') {
@@ -478,48 +530,24 @@ export const markdownPreviewParse = ViewPlugin.fromClass(class {
   destroy() { this.dead = true; if (this.frame) cancelAnimationFrame(this.frame); }
 });
 
-function fenceLines(view: EditorView, line: number): Set<number> {
-  const { state } = view;
-  const at = state.doc.line(line);
-  const fences = new Set<number>();
-  syntaxTree(state).iterate({
-    from: Math.max(0, at.from - 1),
-    to: Math.min(state.doc.length, at.to + 1),
-    enter: (node) => {
-      if (node.name !== 'FencedCode') return;
-      fences.add(state.doc.lineAt(node.from).number);
-      fences.add(state.doc.lineAt(node.to).number);
-    },
-  });
-  return fences;
-}
-
-// Collapsed table and frontmatter lines have no height for the view's vertical motion to land on, and a code block's two
-// fences are widget rows the caret must not rest on, so within such a block's neighbourhood j/k and the arrows step one
-// source line at a time by hand, skipping the fences. A table or frontmatter line the caret lands on reveals itself as
-// text; code lines are already editable source, and their fences switch only via the header's MD button.
+// Collapsed table and frontmatter lines have no height for the view's vertical motion to land on, so within such a
+// block's neighbourhood j/k and the arrows step one source line at a time by hand; the line the caret lands on reveals
+// itself as text.
 function stepBlock(view: EditorView, dir: 1 | -1): boolean {
   const { state } = view;
   const line = state.doc.lineAt(state.selection.main.head).number;
-  const fences = fenceLines(view, line);
-  let near = false;
-  for (const fence of fences) if (line >= fence - 1 && line <= fence + 1) near = true;
   const plugin = view.plugin(markdownPreview);
-  if (!near && plugin) {
-    plugin.decorations.between(0, state.doc.length, (from, to, value) => {
-      const widget = value.spec.widget;
-      if (widget instanceof TableWidget || widget instanceof FrontmatterWidget) {
-        const last = state.doc.lineAt(to).number;
-        if (line >= widget.first - 1 && line <= last + 1) near = true;
-      }
-    });
-  }
+  if (!plugin) return false;
+  let near = false;
+  plugin.decorations.between(0, state.doc.length, (from, to, value) => {
+    const widget = value.spec.widget;
+    if (widget instanceof TableWidget || widget instanceof FrontmatterWidget) {
+      const last = state.doc.lineAt(to).number;
+      if (line >= widget.first - 1 && line <= last + 1) near = true;
+    }
+  });
   if (!near) return false;
-  let target = line + dir;
-  while (target >= 1 && target <= state.doc.lines && fences.has(target)) target += dir;
-  // The skip can run past the document edge; clamping back would rest the caret on the fence it just skipped, so the key
-  // is swallowed and the caret stays put.
-  if (target < 1 || target > state.doc.lines) return true;
+  const target = Math.min(Math.max(line + dir, 1), state.doc.lines);
   view.dispatch({ selection: { anchor: state.doc.line(target).from }, scrollIntoView: true });
   return true;
 }

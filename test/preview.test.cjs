@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { lists, showWritten, shownPanel, drawnLines, lineBoxes, cursorAt, tableGrid, tableCells, pickedCells, taskBoxes, taskMarkers, taskCentreDelta, codeBlockHeader, codeCopyButton, codeSourceToggle, clearClipboard, clipboardText, codeContent } = require('./editor-ui.cjs');
+const { lists, showWritten, shownPanel, drawnLines, lineBoxes, cursorAt, tableGrid, tableCells, pickedCells, taskBoxes, taskMarkers, taskCentreDelta, selectionMarks, clearClipboard, clipboardText, codeContent } = require('./editor-ui.cjs');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 // The header's switch between the rendered page and its source, and the marks the live preview draws.
@@ -84,26 +84,50 @@ test('a task checkbox sits on the text centreline and its source marker reads bl
 test('a fenced code block is drawn as a bordered block', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-code', lists, async ({ home, page, errors }) => {
   const file = join(home, 'code.md');
   await showWritten(page, file, '```ts\nconst x = 1;\n```\n\nafter\n', 'const x');
-  await until(async () => (await codeBlockHeader(shownPanel(page)).count()) > 0);
-  assert.ok(await codeCopyButton(shownPanel(page)).count() > 0);
-  assert.ok(await md(page, 'cm-codeblock-content').count() > 0);
+  await lineBoxes(shownPanel(page)).filter({ hasText: 'after' }).click();
+  await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
+  assert.ok(await md(page, 'cm-md-codeblock-bottom').count() > 0);
+  assert.ok(await md(page, 'cm-md-codeblock').count() > 0);
+  assert.equal(await md(page, 'cm-md-code-lang').innerText(), 'ts');
+  assert.ok(await md(page, 'cm-md-code-lang').evaluate((el) => el.closest('.cm-line').classList.contains('cm-md-codeblock-top')));
   assert.deepEqual(errors, []);
 }));
 
-test('an indented code block keeps its box, which the community inline mode does not draw', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-indentcode', lists, async ({ home, page, errors }) => {
+test('an indented code block keeps its box', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-indentcode', lists, async ({ home, page, errors }) => {
   const file = join(home, 'indent.md');
   await showWritten(page, file, '    const x = 1;\n    const y = 2;\n\ntail\n', 'tail');
+  await lineBoxes(shownPanel(page)).filter({ hasText: 'tail' }).click();
   await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
   assert.ok(await md(page, 'cm-md-codeblock-bottom').count() > 0);
   assert.deepEqual(errors, []);
 }));
 
-test('the code block Copy button lifts every line of the code', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-codecopy', lists, async ({ home, page, errors }) => {
+test('an unnamed fence hides its first row like the last', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-unnamed', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'unnamed.md');
+  await showWritten(page, file, '# T\n\n```\nplain\n```\n\ntail\n', 'tail');
+  await lineBoxes(shownPanel(page)).filter({ hasText: 'tail' }).click();
+  await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
+  assert.equal(await md(page, 'cm-md-code-lang').count(), 0);
+  assert.equal(await md(page, 'cm-md-codeblock-lang').count(), 0);
+  assert.equal(await md(page, 'cm-md-codeblock-top').innerText(), 'plain');
+  assert.equal(await lineBoxes(shownPanel(page)).filter({ hasText: '```' }).count(), 0);
+  assert.deepEqual(errors, []);
+}));
+
+test('a drag across code lines selects them visibly and copies every line', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-codecopy', lists, async ({ home, page, errors }) => {
   const file = join(home, 'codecopy.md');
   await showWritten(page, file, '# T\n\n```ts\nconst a = 1;\nconst b = 2;\nconst c = 3;\n```\n\ntail\n', 'tail');
-  await until(async () => (await codeBlockHeader(shownPanel(page)).count()) > 0);
+  await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
+  const lines = lineBoxes(shownPanel(page));
+  const a = await lines.filter({ hasText: 'const a = 1;' }).boundingBox();
+  const b = await lines.filter({ hasText: 'const c = 3;' }).boundingBox();
+  await page.mouse.move(a.x + 5, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + 200, b.y + b.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await until(async () => (await selectionMarks(shownPanel(page)).count()) > 0);
   await clearClipboard(page);
-  await codeCopyButton(shownPanel(page)).click();
+  await page.keyboard.press('Meta+c');
   await until(async () => (await clipboardText(page)).trim() === 'const a = 1;\nconst b = 2;\nconst c = 3;');
   assert.deepEqual(errors, []);
 }));
@@ -111,7 +135,7 @@ test('the code block Copy button lifts every line of the code', { timeout: 12000
 test('code lines stay editable text and a drag across them copies every line', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-codeedit', lists, async ({ home, page, errors }) => {
   const file = join(home, 'codeedit.md');
   await showWritten(page, file, '# T\n\n```ts\nconst a = 1;\nconst b = 2;\nconst c = 3;\n```\n\ntail\n', 'tail');
-  await until(async () => (await codeBlockHeader(shownPanel(page)).count()) > 0);
+  await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
   const lines = lineBoxes(shownPanel(page));
   const first = lines.filter({ hasText: 'const a = 1;' });
   const a = await first.boundingBox();
@@ -130,12 +154,29 @@ test('code lines stay editable text and a drag across them copies every line', {
   assert.deepEqual(errors, []);
 }));
 
-test('the MD button reads the fences and code as source', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-codesource', lists, async ({ home, page, errors }) => {
+test('rendered code carries highlight spans over the box', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-codehl', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'codehl.md');
+  await showWritten(page, file, '# T\n\n```ts\nconst a = 1;\n```\n\ntail\n', 'tail');
+  const keyword = md(page, 'cm-md-codeblock').locator('.hljs-keyword');
+  await until(async () => (await keyword.count()) > 0);
+  const colour = await keyword.first().evaluate((el) => getComputedStyle(el).color);
+  const plain = await md(page, 'cm-md-codeblock').first().evaluate((el) => getComputedStyle(el).color);
+  assert.notEqual(colour, plain);
+  assert.deepEqual(errors, []);
+}));
+
+test('the caret inside a code block reads it as raw source and leaving renders it again', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-codesource', lists, async ({ home, page, errors }) => {
   const file = join(home, 'codesource.md');
   await showWritten(page, file, '# T\n\n```ts\nconst a = 1;\n```\n\ntail\n', 'tail');
-  await until(async () => (await codeBlockHeader(shownPanel(page)).count()) > 0);
-  await codeSourceToggle(shownPanel(page)).click();
+  await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
+  assert.equal(await lineBoxes(shownPanel(page)).filter({ hasText: '```ts' }).count(), 0);
+  assert.ok(await md(page, 'cm-md-codeblock').count() > 0);
+  await lineBoxes(shownPanel(page)).nth(2).click();
   await until(async () => (await lineBoxes(shownPanel(page)).filter({ hasText: '```ts' }).count()) > 0);
+  assert.equal(await md(page, 'cm-md-codeblock').count(), 0);
+  await lineBoxes(shownPanel(page)).filter({ hasText: 'tail' }).click();
+  await until(async () => (await lineBoxes(shownPanel(page)).filter({ hasText: '```ts' }).count()) === 0);
+  assert.ok(await md(page, 'cm-md-codeblock').count() > 0);
   assert.deepEqual(errors, []);
 }));
 
@@ -251,49 +292,40 @@ test('the divider narrows the rendered page and the choice is kept', { timeout: 
   assert.deepEqual(errors, []);
 }));
 
-// A page holding every mark the preview draws, one element per line, so a case can read each render and walk each
-// editable line; the two fences are widget rows the walk steps over.
+// A page holding every mark the preview draws, one element per line, so a case can read each render and walk each line.
 const sinkBody = '# H1\n## H2\n### H3\nplain **bold** *it* ~~strike~~ `code`\n[link](https://example.com)\n![alt](./local.png)\n- item one\n- [ ] task\n> quote line\n---\n```ts\nconst x = 1;\n```\n| a | b |\n| --- | --- |\n| 1 | 2 |\ntail\n';
 const sinkRows = sinkBody.trimEnd().split('\n');
 
-// The community code block swaps each fence for a header/footer widget row, so widget rows and line boxes each count as
-// one source line. Read the shown pane only: a hidden tab keeps its own rows in the document.
+// Every source line keeps a line box, so the active line's index among them is its source line. Read the shown pane
+// only: a hidden tab keeps its own rows in the document.
 const activeLineNo = (page) => codeContent(shownPanel(page)).evaluate((content) => {
-  let src = 0;
-  let active = 0;
-  for (const row of content.children) {
-    if (!row.classList.contains('cm-line') && !row.classList.contains('cm-codeblock-header') && !row.classList.contains('cm-codeblock-footer')) continue;
-    src += 1;
-    if (row.classList.contains('cm-activeLine')) active = src;
-  }
-  return active;
+  const lines = [...content.children].filter((row) => row.classList.contains('cm-line'));
+  return lines.findIndex((row) => row.classList.contains('cm-activeLine')) + 1;
 });
 
 test('every markdown element renders on a page the caret is not editing', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-sink', lists, async ({ home, page, errors }) => {
   const file = join(home, 'sink.md');
   await showWritten(page, file, sinkBody, 'tail');
-  for (const cls of ['cm-md-h1', 'cm-md-h2', 'cm-md-h3', 'cm-md-bold', 'cm-md-italic', 'cm-md-strike', 'cm-md-code', 'cm-md-link', 'cm-md-image', 'cm-md-bullet', 'cm-md-task', 'cm-md-quote', 'cm-md-rule', 'cm-codeblock-content', 'cm-md-table']) {
+  for (const cls of ['cm-md-h1', 'cm-md-h2', 'cm-md-h3', 'cm-md-bold', 'cm-md-italic', 'cm-md-strike', 'cm-md-code', 'cm-md-link', 'cm-md-image', 'cm-md-bullet', 'cm-md-task', 'cm-md-quote', 'cm-md-rule', 'cm-md-codeblock-top', 'cm-md-table']) {
     await until(async () => (await md(page, cls).count()) > 0, { timeout: 30000 });
   }
-  assert.ok(await codeCopyButton(shownPanel(page)).count() > 0);
   assert.deepEqual(errors, []);
 }));
 
-test('j and k walk every editable line of a fully rendered page, stepping over the code fences', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-sweep', lists, async ({ home, page, errors }) => {
+test('j and k walk every source line of a fully rendered page, keeping each line box', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-sweep', lists, async ({ home, page, errors }) => {
   const file = join(home, 'sweep.md');
   await showWritten(page, file, sinkBody, 'tail');
   await until(async () => (await md(page, 'cm-md-table').count()) > 0);
-  const walk = sinkRows.map((_, i) => i + 1).filter((n) => !sinkRows[n - 1].startsWith('```'));
+  const walk = sinkRows.map((_, i) => i + 1);
   await lineBoxes(shownPanel(page)).nth(0).click();
   await until(async () => (await activeLineNo(page)) === walk[0]);
-  // Down through headings, marks, link, image, list, task, quote, rule, code and table, stepping over the two fences: no
-  // editable line may be skipped.
+  // Down through headings, marks, link, image, list, task, quote, rule, fence, table: no line may be skipped.
   for (let i = 1; i < walk.length; i++) {
     await page.keyboard.press('j');
     await until(async () => (await activeLineNo(page)) === walk[i]);
   }
   // The block renders survive the walk (the caret ends on the plain tail line).
-  for (const cls of ['cm-md-rule', 'cm-codeblock-content', 'cm-md-quote']) {
+  for (const cls of ['cm-md-rule', 'cm-md-codeblock-top', 'cm-md-quote']) {
     assert.ok(await md(page, cls).count() > 0, `${cls} collapsed during the walk`);
   }
   // And back up to the top, one line at a time.
@@ -322,8 +354,8 @@ test('k leaving a code block steps line by line past a table above it', { timeou
   await until(async () => (await md(page, 'cm-md-table').count()) > 0);
   await lineBoxes(shownPanel(page)).filter({ hasText: 'const x = 1;' }).click();
   await until(async () => (await activeLineNo(page)) === 10);
-  // Up over the opening fence, the blank, the code heading and the blank onto the table: no editable line skipped.
-  for (const n of [8, 7, 6, 5]) {
+  // Up through the fence, the blank, the code heading and the blank onto the table: no line skipped.
+  for (const n of [9, 8, 7, 6, 5]) {
     await page.keyboard.press('k');
     await until(async () => (await activeLineNo(page)) === n);
   }
@@ -331,28 +363,9 @@ test('k leaving a code block steps line by line past a table above it', { timeou
   for (let i = 0; i < 3; i++) await page.keyboard.press('k');
   await until(async () => (await activeLineNo(page)) === 2);
   await until(async () => (await md(page, 'cm-md-table').count()) === 1);
-  // Back down onto the blank line below the closing fence: a blank source line beside a widget row still counts itself.
-  for (let i = 0; i < 8; i++) await page.keyboard.press('j');
+  // Back down onto the blank line below the closing fence.
+  for (let i = 0; i < 10; i++) await page.keyboard.press('j');
   await until(async () => (await activeLineNo(page)) === 12);
-  assert.deepEqual(errors, []);
-}));
-
-test('j and k at a document edge never rest the caret on a code fence', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-fenceedge', lists, async ({ home, page, errors }) => {
-  const file = join(home, 'edge.md');
-  await showWritten(page, file, '```ts\nconst a = 1;\n```', 'const a');
-  await until(async () => (await codeBlockHeader(shownPanel(page)).count()) > 0);
-  await lineBoxes(shownPanel(page)).filter({ hasText: 'const a = 1;' }).click();
-  await page.keyboard.press('k');
-  await until(async () => (await activeLineNo(page)) === 2);
-  await page.keyboard.press('j');
-  await until(async () => (await activeLineNo(page)) === 2);
-  await showWritten(page, join(home, 'edge2.md'), '# T\n\n```ts\nconst a = 1;\n```', 'const a');
-  await until(async () => (await codeBlockHeader(shownPanel(page)).count()) > 0);
-  await lineBoxes(shownPanel(page)).filter({ hasText: 'const a = 1;' }).click();
-  await page.keyboard.press('j');
-  await until(async () => (await activeLineNo(page)) === 4);
-  await page.keyboard.press('k');
-  await until(async () => (await activeLineNo(page)) === 2);
   assert.deepEqual(errors, []);
 }));
 

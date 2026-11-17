@@ -22,8 +22,8 @@
     "@codemirror/view": "^6.43.15",
     "@lezer/highlight": "^1.2.5",
     "@replit/codemirror-vim": "^6.4.0",
-    "codemirror-live-markdown": "github:blueberrycongee/codemirror-live-markdown",
     "fuzzysort": "^4.0.2",
+    "lowlight": "^3.3.0",
     "node-diff3": "^4.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
