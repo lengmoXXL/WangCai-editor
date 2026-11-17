@@ -3,6 +3,7 @@ import { indentUnit } from '@codemirror/language';
 import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state';
 import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from '@codemirror/view';
 import { Vim, getCM, vim, type CodeMirrorV } from '@replit/codemirror-vim';
+import { codeBlockField, initHighlighter } from 'codemirror-live-markdown';
 import { createRoot } from 'react-dom/client';
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import fuzzysort from 'fuzzysort';
@@ -320,7 +321,7 @@ const imageSourceFor = (context: UiContext, file: FileClick): PreviewImageSource
     return pending;
   };
 };
-const previewExtensions = (loadImage: PreviewImageSource) => [markdownPreview, markdownPreviewKeys, markdownPreviewParse, EditorView.lineWrapping, previewImageSource.of(loadImage), imageMeasure.of(EditorView.theme({ '.cm-md-image': {} }))];
+const previewExtensions = (loadImage: PreviewImageSource) => [markdownPreview, markdownPreviewKeys, markdownPreviewParse, codeBlockField({ interaction: 'inline', copyButton: true }), EditorView.lineWrapping, previewImageSource.of(loadImage), imageMeasure.of(EditorView.theme({ '.cm-md-image': {} }))];
 
 function EditorPage({ file, text, remember, peeking, navigate, editing, preview, loadImage }: { file: HistoryEntry; text: { body: string }; remember: Remember; peeking: boolean; navigate: Navigate; editing: Editing; preview: boolean; loadImage: PreviewImageSource }) {
   const element = useRef<HTMLDivElement>(null);
@@ -392,6 +393,7 @@ function EditorPage({ file, text, remember, peeking, navigate, editing, preview,
     control.current = view;
     const scrolled = () => remember(shown.current, { top: view.scrollDOM.scrollTop });
     view.scrollDOM.addEventListener('scroll', scrolled, { passive: true });
+    void initHighlighter();
     // The keys are handed over as the view is built, so a key pressed as soon as the file appears finds its answer instead of
     // waiting for a later render.
     pageKeys.set(view, { jump: (act) => void goAt(act, placeOf(view)), say: (text) => handlers.current.say(text) });

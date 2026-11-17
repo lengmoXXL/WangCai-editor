@@ -89,19 +89,6 @@ class TaskWidget extends WidgetType {
   ignoreEvent() { return false; }
 }
 
-// The language a fenced code block names is kept as a label at the head of the box, where the fence's own marks were.
-class CodeLanguageWidget extends WidgetType {
-  constructor(readonly language: string) { super(); }
-  toDOM() {
-    const el = document.createElement('span');
-    el.className = 'cm-md-code-lang';
-    el.textContent = this.language;
-    return el;
-  }
-  eq(other: CodeLanguageWidget) { return other.language === this.language; }
-  ignoreEvent() { return true; }
-}
-
 type Seg = { text: string; cls?: string };
 
 // Which preview class an inline node wears, the span of its content, and the span the whole mark consumes: one place
@@ -390,22 +377,18 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
         for (let l = first; l <= last; l += 1) line(doc.line(l).from, 'cm-md-quote');
         return;
       }
-      if (name === 'FencedCode' || name === 'CodeBlock') {
+      // The community codeBlockField reads FencedCode only, in inline mode: it swaps the two fences for a header (language,
+      // Copy, MD) and a footer and keeps the code as editable text lines. An indented CodeBlock has no fences to swap, so it
+      // keeps the box this pass draws.
+      if (name === 'FencedCode') return false;
+      if (name === 'CodeBlock') {
         const first = doc.lineAt(from).number;
         const last = doc.lineAt(to).number;
-        const info = name === 'FencedCode' ? node.node.getChild('CodeInfo') : null;
-        const language = info ? doc.sliceString(info.from, info.to).trim().split(/\s+/)[0] : '';
         for (let l = first; l <= last; l += 1) {
-          const ln = doc.line(l);
-          // A fence's own marks give way to the box's edge; the opening one keeps the language it names as a label, and a
-          // fence the caret rests on reads as text. No decoration spans a line break.
-          if (name === 'FencedCode' && (l === first || l === last)) {
-            syntax(ln.from, ln.to, l === first && language ? new CodeLanguageWidget(language) : undefined);
-          }
           let cls = 'cm-md-codeblock';
           if (l === first) cls += ' cm-md-codeblock-top';
           if (l === last) cls += ' cm-md-codeblock-bottom';
-          line(ln.from, cls);
+          line(doc.line(l).from, cls);
         }
         return false;
       }
@@ -433,7 +416,7 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
         if (!revealed(from, to)) ranges.push({ from, to, value: Decoration.replace({ widget: new RuleWidget() }) });
         return false;
       }
-      if (name === 'EmphasisMark' || name === 'CodeMark' || name === 'StrikethroughMark' || name === 'QuoteMark' || name === 'CodeInfo') {
+      if (name === 'EmphasisMark' || name === 'CodeMark' || name === 'StrikethroughMark' || name === 'QuoteMark') {
         syntax(from, to);
         return;
       }
@@ -495,28 +478,48 @@ export const markdownPreviewParse = ViewPlugin.fromClass(class {
   destroy() { this.dead = true; if (this.frame) cancelAnimationFrame(this.frame); }
 });
 
-// Collapsed table and frontmatter lines have no height for the view's vertical motion to land on, so within such a
-// block's neighbourhood j/k and the arrows step one source line at a time by hand; the line the caret lands on reveals
-// itself as text.
-function blockNear(view: EditorView, line: number): boolean {
-  const plugin = view.plugin(markdownPreview);
-  if (!plugin) return false;
-  let near = false;
-  plugin.decorations.between(0, view.state.doc.length, (from, to, value) => {
-    const widget = value.spec.widget;
-    if (widget instanceof TableWidget || widget instanceof FrontmatterWidget) {
-      const last = view.state.doc.lineAt(to).number;
-      if (line >= widget.first - 1 && line <= last + 1) near = true;
-    }
+function fenceLines(view: EditorView, line: number): Set<number> {
+  const { state } = view;
+  const at = state.doc.line(line);
+  const fences = new Set<number>();
+  syntaxTree(state).iterate({
+    from: Math.max(0, at.from - 1),
+    to: Math.min(state.doc.length, at.to + 1),
+    enter: (node) => {
+      if (node.name !== 'FencedCode') return;
+      fences.add(state.doc.lineAt(node.from).number);
+      fences.add(state.doc.lineAt(node.to).number);
+    },
   });
-  return near;
+  return fences;
 }
 
+// Collapsed table and frontmatter lines have no height for the view's vertical motion to land on, and a code block's two
+// fences are widget rows the caret must not rest on, so within such a block's neighbourhood j/k and the arrows step one
+// source line at a time by hand, skipping the fences. A table or frontmatter line the caret lands on reveals itself as
+// text; code lines are already editable source, and their fences switch only via the header's MD button.
 function stepBlock(view: EditorView, dir: 1 | -1): boolean {
   const { state } = view;
   const line = state.doc.lineAt(state.selection.main.head).number;
-  if (!blockNear(view, line)) return false;
-  const target = Math.min(Math.max(line + dir, 1), state.doc.lines);
+  const fences = fenceLines(view, line);
+  let near = false;
+  for (const fence of fences) if (line >= fence - 1 && line <= fence + 1) near = true;
+  const plugin = view.plugin(markdownPreview);
+  if (!near && plugin) {
+    plugin.decorations.between(0, state.doc.length, (from, to, value) => {
+      const widget = value.spec.widget;
+      if (widget instanceof TableWidget || widget instanceof FrontmatterWidget) {
+        const last = state.doc.lineAt(to).number;
+        if (line >= widget.first - 1 && line <= last + 1) near = true;
+      }
+    });
+  }
+  if (!near) return false;
+  let target = line + dir;
+  while (target >= 1 && target <= state.doc.lines && fences.has(target)) target += dir;
+  // The skip can run past the document edge; clamping back would rest the caret on the fence it just skipped, so the key
+  // is swallowed and the caret stays put.
+  if (target < 1 || target > state.doc.lines) return true;
   view.dispatch({ selection: { anchor: state.doc.line(target).from }, scrollIntoView: true });
   return true;
 }
