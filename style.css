@@ -23,9 +23,9 @@
 .editor-icon:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: -2px; }
 .editor-icon svg { width: 16px; height: 16px; }
 .editor-icon[aria-pressed="true"] { color: var(--wc-accent); }
+.cm-gutterElement { overflow: hidden; }
 /* The markdown live preview: the buffer rendered inline, in the page's own colours. The line the caret rests on keeps its
    raw syntax (dimmed here), so what is being edited reads as text while the rest reads as the document. */
-.cm-gutterElement { overflow: hidden; }
 .cm-md-syntax { color: var(--wc-muted); opacity: 0.6; }
 .cm-md-h1, .cm-md-h2, .cm-md-h3, .cm-md-h4, .cm-md-h5, .cm-md-h6 { font-weight: 700; line-height: 1.3; color: var(--wc-foreground); }
 .cm-md-h1 { font-size: 1.7em; color: var(--wc-blue); }
@@ -93,6 +93,7 @@
 .editor-lsp-detail { position: absolute; top: calc(100% + 5px); right: 0; z-index: 6; display: grid; gap: 3px; min-width: 160px; max-width: 320px; padding: 6px 8px; font-size: 11px; line-height: 1.4; pointer-events: none; color: var(--wc-muted); }
 .editor-lsp-name { color: var(--wc-foreground); }
 .editor-lsp-detail span { overflow-wrap: anywhere; }
+.cm-tooltip { max-width: 100%; max-height: 100%; overflow: auto; overflow-wrap: anywhere; }
 .editor-lsp-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--wc-muted); }
 .editor-lsp.open .editor-lsp-dot { background: var(--wc-accent); }
 .editor-lsp.closed .editor-lsp-dot, .editor-lsp.missing .editor-lsp-dot { background: var(--wc-yellow); }

@@ -1,4 +1,5 @@
 import { LSPClient, hoverTooltips, serverDiagnostics, type Transport } from '@codemirror/lsp-client';
+import { tooltips } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
 import type { UiContext } from '@lengmoxxl/sdk/channel';
 import { machineKey, type FileClick, type LspData, type LspExit, type LspLog, type LspSession, type OpenOptions } from './shared';
@@ -98,7 +99,13 @@ class Session {
     this.client = new LSPClient({
       rootUri: uriOf(info.root),
       timeout: 10_000,
-      extensions: [serverDiagnostics(), hoverTooltips()],
+      // A hover answers with whatever the server sends, which can be wider than the page it hovers over: the window-wide
+      // space tooltips default to would let it cover the panels beside this one, so the tooltip lives inside the editor and
+      // keeps to its page, where the sheet caps its size and the editor clips what is left.
+      extensions: [serverDiagnostics(), hoverTooltips(), tooltips({
+        position: 'absolute',
+        tooltipSpace: (view) => view.scrollDOM.getBoundingClientRect(),
+      })],
       // What a server says about itself is the page's notice, which leaves by itself, rather than the client's dialog,
       // which stays up until it is closed.
       notificationHandlers: {

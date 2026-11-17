@@ -65,6 +65,14 @@ const tokenAt = (page, lineText, token) => lineBoxes(page).evaluateAll((lines, [
   return null;
 }, [lineText, token]);
 
+// A tooltip that is already up does not ask again, so the pointer leaves the name and comes back on every attempt; what a
+// hover says is read from the tooltip the editor draws over it. An attempt is given half a second, since the next one takes
+// the pointer away again and an answer still on its way would be missed.
+const hoverUntil = (page, at, phrase) => until(
+  async () => (await hoverTips(page).allInnerTexts()).some((text) => text.replace(/\s+/g, ' ').includes(phrase)),
+  { act: async () => { await page.mouse.move(at.x, at.y + 40); await page.mouse.move(at.x, at.y); }, interval: 500 },
+);
+
 test('a code file hovers and underlines from a language server, which the dot restarts and a closing workspace drops', { timeout: 90000 }, () => withWindow('wangcai-editor-lsp', lists, async ({ home, page, errors }) => {
   // The answer file this case writes beside the one it opens, whose single line is the name they import.
   const answerBody = `${answerLine}\n`;
@@ -74,13 +82,6 @@ test('a code file hovers and underlines from a language server, which the dot re
   const typeError = 'TYPE_ERROR';
   const useBody = [`import { ${answerToken} } from "./${answerToken}";`, answerUse, `const value: number = '${typeError}';`, ''].join('\n');
   await openTs(home, page, useBody, typeError);
-  // A tooltip that is already up does not ask again, so the pointer leaves the name and comes back on every attempt; what a
-  // hover says is read from the tooltip the editor draws over it. An attempt is given half a second, since the next one takes
-  // the pointer away again and an answer still on its way would be missed.
-  const hoverUntil = (at, phrase) => until(
-    async () => (await hoverTips(page).allInnerTexts()).some((text) => text.replace(/\s+/g, ' ').includes(phrase)),
-    { act: async () => { await page.mouse.move(at.x, at.y + 40); await page.mouse.move(at.x, at.y); }, interval: 500 },
-  );
   const dot = lspDot(shownPanel(page), 'open');
   const detail = lspDetail(shownPanel(page));
   await dot.hover();
@@ -89,19 +90,31 @@ test('a code file hovers and underlines from a language server, which the dot re
   // A diagnostic arrives as a marker, which the editor paints as an underline over the offending text.
   await diagnostics(shownPanel(page)).first().waitFor({ timeout: 60000 });
   const at = await tokenAt(page, answerUse, answerToken);
-  await hoverUntil(at, `const ${answerToken}: 42`);
+  await hoverUntil(page, at, `const ${answerToken}: 42`);
   // A restart drops the server of this file and starts another one, which the view follows: the hover answers again once
   // the new server has been told what the file holds.
   await dot.click();
   await dot.waitFor();
   // The new server answers about the same name again, which the editor shows in the tooltip of that line. A server that
   // has just started knows only the import at first, so what it answers is not judged by the type it has yet to read.
-  await hoverUntil(at, `import ${answerToken}`);
+  await hoverUntil(page, at, `import ${answerToken}`);
   // A server started again is a process of its own, which takes its moment to appear where it is looked for.
   await until(() => languageServers(home).length === 1);
   // Closing the workspace takes the server with it: no file of this window is left to need it.
   await closeWorkspace(workspaceTabs(page).first());
   await until(() => !languageServers(home).length);
+  assert.deepEqual(errors, []);
+}));
+
+test('a hover wider than the page wraps inside it instead of covering the panels beside it', { timeout: 90000 }, () => withWindow('wangcai-editor-lsp-hoverwidth', lists, async ({ home, page, errors }) => {
+  const long = 'x'.repeat(160);
+  await openTs(home, page, `const msg = '${long}';\n`, 'const msg');
+  const at = await tokenAt(page, 'const msg', 'msg');
+  await hoverUntil(page, at, 'const msg');
+  const tip = await hoverTips(page).first().boundingBox();
+  const panel = await shownPanel(page).boundingBox();
+  assert.ok(tip.x >= panel.x - 1 && tip.x + tip.width <= panel.x + panel.width + 1);
+  assert.ok(tip.y >= panel.y - 1 && tip.y + tip.height <= panel.y + panel.height + 1);
   assert.deepEqual(errors, []);
 }));
 
