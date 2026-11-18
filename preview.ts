@@ -79,10 +79,19 @@ class TaskWidget extends WidgetType {
     box.type = 'checkbox';
     box.className = 'cm-md-task';
     box.checked = this.checked;
-    box.addEventListener('mousedown', (event) => {
-      event.preventDefault();
+    // The press must not take the caret.
+    box.addEventListener('mousedown', (event) => event.preventDefault());
+    const tick = () => {
       const at = view.posAtDOM(box);
       view.dispatch({ changes: { from: at, to: at + 3, insert: this.checked ? '[ ]' : '[x]' } });
+    };
+    box.addEventListener('click', tick);
+    // The editor's own keys would eat Space before the box sees it, so the box answers Space itself.
+    box.addEventListener('keydown', (event) => {
+      if (event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      tick();
     });
     return box;
   }
