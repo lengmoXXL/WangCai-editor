@@ -7,7 +7,7 @@ import { createRoot } from 'react-dom/client';
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import fuzzysort from 'fuzzysort';
 import { merge } from 'node-diff3';
-import type { WorkspaceActive } from '@lengmoxxl/sdk';
+import type { Theme, WorkspaceActive } from '@lengmoxxl/sdk';
 import { bindKeys } from '@lengmoxxl/sdk/keys';
 import type { TabRecord, UiContext } from '@lengmoxxl/sdk/channel';
 import { LanguageServices, type FileSymbol, type LocationFeature, type ServiceStatus, type Target } from './lsp';
@@ -22,6 +22,8 @@ const identity = { id: 'editor', title: '编辑器' };
 export const title = identity.title;
 let activeWorkspaceId: string | undefined;
 let font: Font;
+let theme: Theme;
+let bus: UiContext['global'];
 // The extensions every view shares: made once in mount(), and taken by each view as it is built.
 let chrome: Extension[] = [];
 let services: LanguageServices | undefined;
@@ -373,10 +375,12 @@ function EditorPage({ file, text, remember, peeking, navigate, editing, preview,
   const shown = useRef(file);
   useEffect(() => { shown.current = file; });
   useEffect(() => {
+    const colours = new Compartment();
     const view = new EditorView({
       state: EditorState.create({
         doc: text.body,
         extensions: [
+          colours.of(editorTheme(theme, font)),
           ...chrome,
           modeFor(file.path),
           server.of(link),
@@ -395,8 +399,13 @@ function EditorPage({ file, text, remember, peeking, navigate, editing, preview,
     // The keys are handed over as the view is built, so a key pressed as soon as the file appears finds its answer instead of
     // waiting for a later render.
     pageKeys.set(view, { jump: (act) => void goAt(act, placeOf(view)), say: (text) => handlers.current.say(text) });
+    // CodeMirror keeps its colours in the extensions a view was built with, so a switch of theme has to reach every view
+    // already on screen rather than only the ones opened after it.
+    const offTheme = bus.subscribe<Theme>('theme', (next) => {
+      view.dispatch({ effects: colours.reconfigure(editorTheme(next, font)) });
+    });
     return () => {
-      pageKeys.delete(view);
+      pageKeys.delete(view); offTheme();
       view.scrollDOM.removeEventListener('scroll', scrolled);
       view.destroy();
       control.current = undefined;
@@ -1061,6 +1070,8 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
 export async function mount(_container: HTMLElement, context: UiContext) {
   const profile: Settings = context.host.config;
   font = profile.font;
+  theme = profile.theme;
+  bus = context.global;
   // The vim keys over the text, which the page may edit and write back, and the history behind its undo. The selection a
   // visual mode covers is drawn here, because the vim keys blank the browser's own ::selection without drawing one of
   // their own.
@@ -1077,9 +1088,10 @@ export async function mount(_container: HTMLElement, context: UiContext) {
     },
   }]));
   chrome = [tab, vim(), lineNumbers(), highlightActiveLine(), drawSelection(), undoHistory(),
-    EditorState.tabSize.of(2), indentUnit.of('  '), ...editorTheme(profile.theme, font)];
+    EditorState.tabSize.of(2), indentUnit.of('  ')];
   services = new LanguageServices(context);
   for (const [key, history] of Object.entries(await context.ui.request<Record<string, History>>('history'))) histories.set(key, history);
+  const offTheme = context.global.subscribe<Theme>('theme', (next) => { theme = next; });
   const offActive = context.global.subscribe<WorkspaceActive | null>('workspace:active', (value) => {
     activeWorkspaceId = value?.workspaceId;
     // The shell moves unscoped tabs into the first selected workspace.
@@ -1104,7 +1116,7 @@ export async function mount(_container: HTMLElement, context: UiContext) {
     void context.global.publish('core:show-view', { plugin: identity.id });
   });
   return () => {
-    offActive();
+    offActive(); offTheme();
     off();
     saveHistoryNow(context);
     histories.clear();

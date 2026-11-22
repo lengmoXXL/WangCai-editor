@@ -4,8 +4,8 @@ import { tags } from '@lezer/highlight';
 import type { Theme } from '@lengmoxxl/sdk';
 import type { Font } from './shared';
 
-// The editor drawn in the app's own colours: the shell around the text, and the colours the text is read in. Both are
-// built once, from the theme and the font the window was started with.
+// The editor drawn in the app's own colours: the shell around the text, and the colours the text is read in. Built again
+// on a switch of theme, so it reads the scheme the window has just settled on rather than the one it started with.
 export function editorTheme(theme: Theme, font: Font) {
   const dark = getComputedStyle(document.documentElement).colorScheme !== 'light';
   const lineHeight = font.lineHeight ? Math.round(font.size * font.lineHeight) : 0;
