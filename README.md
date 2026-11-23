@@ -28,6 +28,16 @@ tabs: [
 | `size` | `12` | 代码的字号（面板文字固定 12px） |
 | `lineHeight` | 编辑器默认 | 行高，按 `size` 的倍数算 |
 
+### `fontSizes`
+
+按文件类型单独定字号：`config.fontSizes` 按语言 id 分键（`typescriptreact` 这类，不是 `tsx` 后缀），没写到的类型用
+`font.size`。行高跟着该类型的字号算。
+
+```ts
+// 写在 editor 那一项的 config 里。
+config: { font: { size: 12 }, fontSizes: { markdown: 16, json: 11 } },
+```
+
 ## 语法高亮
 
 按文件后缀给语言，认得这些：

@@ -20,6 +20,9 @@ export const config = {
     size: { type: 'number', default: 12 },
     lineHeight: { type: 'number' },
   },
+  // Per-language font sizes from init.ts, keyed by the language this plugin reads a file as; a language that is not named
+  // here keeps font.size.
+  fontSizes: { type: 'object' },
   // Per-language entries from init.ts, keyed by the language this plugin reads a file as: a command or markers replaces
   // that one default below, false turns the language off, and a language that is not named here keeps its defaults.
   lsp: { type: 'object' },

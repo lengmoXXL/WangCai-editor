@@ -22,6 +22,7 @@ const identity = { id: 'editor', title: '编辑器' };
 export const title = identity.title;
 let activeWorkspaceId: string | undefined;
 let font: Font;
+let fontSizes: Record<string, number>;
 let theme: Theme;
 let bus: UiContext['global'];
 // The extensions every view shares: made once in mount(), and taken by each view as it is built.
@@ -375,12 +376,13 @@ function EditorPage({ file, text, remember, peeking, navigate, editing, preview,
   const shown = useRef(file);
   useEffect(() => { shown.current = file; });
   useEffect(() => {
+    const fileFont = { ...font, size: fontSizes[languageOf(file.path) ?? ''] ?? font.size };
     const colours = new Compartment();
     const view = new EditorView({
       state: EditorState.create({
         doc: text.body,
         extensions: [
-          colours.of(editorTheme(theme, font)),
+          colours.of(editorTheme(theme, fileFont)),
           ...chrome,
           modeFor(file.path),
           server.of(link),
@@ -402,7 +404,7 @@ function EditorPage({ file, text, remember, peeking, navigate, editing, preview,
     // CodeMirror keeps its colours in the extensions a view was built with, so a switch of theme has to reach every view
     // already on screen rather than only the ones opened after it.
     const offTheme = bus.subscribe<Theme>('theme', (next) => {
-      view.dispatch({ effects: colours.reconfigure(editorTheme(next, font)) });
+      view.dispatch({ effects: colours.reconfigure(editorTheme(next, fileFont)) });
     });
     return () => {
       pageKeys.delete(view); offTheme();
@@ -1070,6 +1072,7 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
 export async function mount(_container: HTMLElement, context: UiContext) {
   const profile: Settings = context.host.config;
   font = profile.font;
+  fontSizes = profile.fontSizes ?? {};
   theme = profile.theme;
   bus = context.global;
   // The vim keys over the text, which the page may edit and write back, and the history behind its undo. The selection a

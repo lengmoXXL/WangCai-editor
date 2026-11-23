@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { mkdirSync, statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { activeLineBox, alert, backButton, clickFile, collectErrors, createWorkspace, cursorAt, drawnCloseButtons, drawnLines, editorPanels, editorPlugin, editorTab, editorView, filesColumn, filesPlugin, forwardButton, goToPath, landedOn, lineBoxes, lineShown, lists, machine, openDirectoryButton, openEditorWorkspace, openWorkspaces, refreshButton, selectionClass, selectionMarks, showAfter, showFile, shownPanel, shows, showWritten, storedHistory, viewMenu, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
+const { activeLineBox, alert, backButton, clickFile, codeContent, collectErrors, createWorkspace, cursorAt, drawnCloseButtons, drawnLines, editorPanels, editorPlugin, editorTab, editorView, filesColumn, filesPlugin, forwardButton, goToPath, landedOn, lineBoxes, lineShown, lists, machine, openDirectoryButton, openEditorWorkspace, openWorkspaces, refreshButton, selectionClass, selectionMarks, showAfter, showFile, shownPanel, shows, showWritten, storedHistory, viewMenu, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
 const { until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 // An opening line for the pages of the cases that do not turn on which line comes first.
@@ -276,5 +276,21 @@ test('navigation history recovers its position and follows workspace tab ownersh
   await showAfter(page, editorTab(page), middleLine);
   assert.ok(await back.isEnabled());
   assert.ok(await forward.isDisabled());
+  assert.deepEqual(errors, []);
+}));
+
+test('a language named in fontSizes reads at that size, and one unnamed keeps font.size', { timeout: 180000 }, () => withWindow('wangcai-editor-fontsizes', { ...lists, tabs: lists.tabs.map((id) => id === editorPlugin ? { id, config: { font: { size: 12 }, fontSizes: { markdown: 16 } } } : id) }, async ({ home, page, errors }) => {
+  const note = join(home, 'note.md');
+  const code = join(home, 'code.ts');
+  writeFileSync(note, '# Sized note\n');
+  writeFileSync(code, `${firstLine}\n`);
+  await openEditorWorkspace(page);
+  const sizeOf = () => codeContent(shownPanel(page)).evaluate((element) => getComputedStyle(element).fontSize);
+  await openVisit(page, visitTo(note), 'Sized note');
+  assert.equal(await sizeOf(), '16px');
+  await showFile(shownPanel(page), code, firstLine);
+  assert.equal(await sizeOf(), '12px');
+  await showFile(shownPanel(page), note, 'Sized note');
+  assert.equal(await sizeOf(), '16px');
   assert.deepEqual(errors, []);
 }));
