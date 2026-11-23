@@ -16,7 +16,7 @@ export const keys = {
 // Fields this plugin takes from init.ts.
 export const config = {
   font: {
-    family: { type: 'string', default: '"DejaVuSansM Nerd Font Mono", monospace' },
+    family: { type: 'string', default: 'Menlo, monospace' },
     size: { type: 'number', default: 12 },
     lineHeight: { type: 'number' },
   },
