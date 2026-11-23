@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { mkdirSync, statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { activeLineBox, alert, backButton, clickFile, codeContent, collectErrors, createWorkspace, cursorAt, drawnCloseButtons, drawnLines, editorPanels, editorPlugin, editorTab, editorView, filesColumn, filesPlugin, forwardButton, goToPath, landedOn, lineBoxes, lineShown, lists, machine, openDirectoryButton, openEditorWorkspace, openWorkspaces, refreshButton, selectionClass, selectionMarks, showAfter, showFile, shownPanel, shows, showWritten, storedHistory, viewMenu, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
+const { activeLineBox, alert, backButton, clickFile, codeContent, collectErrors, createWorkspace, cursorAt, drawnCloseButtons, drawnLines, editorFocused, editorPanels, editorPlugin, editorTab, editorView, filesColumn, filesPlugin, forwardButton, goToPath, landedOn, lineBoxes, lineShown, lists, machine, openDirectoryButton, openEditorWorkspace, openWorkspaces, refreshButton, selectionClass, selectionMarks, showAfter, showFile, shownPanel, shows, showWritten, storedHistory, viewMenu, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
 const { until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 // An opening line for the pages of the cases that do not turn on which line comes first.
@@ -292,5 +292,16 @@ test('a language named in fontSizes reads at that size, and one unnamed keeps fo
   assert.equal(await sizeOf(), '12px');
   await showFile(shownPanel(page), note, 'Sized note');
   assert.equal(await sizeOf(), '16px');
+  assert.deepEqual(errors, []);
+}));
+
+test('the cursor ask answers with the file and line the tab shows', { timeout: 120000 }, () => withWindow('wangcai-editor-cursor', lists, async ({ home, page, errors }) => {
+  const code = join(home, 'sample.ts');
+  await showWritten(page, code, 'const first = 1;\nconst second = 2;\nconst third = 3;', 'const first');
+  await until(() => editorFocused(page));
+  await page.keyboard.press('G');
+  await lineShown(page, 'const third');
+  assert.deepEqual(await page.evaluate(() => window.wangcai.call('request', 'editor', 'cursor')),
+    { type: 'file', machine, path: code, line: 3, column: 1 });
   assert.deepEqual(errors, []);
 }));

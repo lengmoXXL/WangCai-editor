@@ -4,6 +4,8 @@ export type { FileClick } from '@lengmoxxl/sdk';
 export type Position = { line: number; column: number; top: number };
 export type HistoryEntry = FileClick & Partial<Position>;
 export type History = { entries: HistoryEntry[]; index: number };
+// Where the cursor is in the file a tab shows: the click that opens the same place.
+export type Cursor = FileClick & { line: number; column: number };
 
 // The language service main.ts drives for a file: what the window asks for, what opening one gives back, and what it
 // publishes while a server runs. Bytes cross the channel as base64, since every payload here is JSON.

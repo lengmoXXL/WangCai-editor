@@ -1049,6 +1049,15 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
         const file = showing();
         if (file && container.checkVisibility()) navigate({ type: 'directory', machine: file.machine, path: directoryOf(file) });
       }),
+      // Where the cursor is, asked by the main process for a key bound in init.ts: the entry keeps the position live,
+      // so the tab on show answers with the same place the page reads.
+      context.ui.subscribe<{ nonce: number }>('cursor-query', ({ nonce }) => {
+        const file = showing();
+        if (!file || file.type !== 'file' || !container.checkVisibility()) return;
+        void context.ui.request('cursor-reply', {
+          nonce, cursor: { type: 'file', machine: file.machine, path: file.path, line: file.line ?? 1, column: file.column ?? 1 },
+        });
+      }),
     ];
     const render = () => mounted.render(<Body
       context={context}

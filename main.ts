@@ -2,7 +2,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import type { MachineConnection, Process } from '@lengmoxxl/sdk';
 import type { MainContext } from '@lengmoxxl/sdk/channel';
-import { machineKey, type FileClick, type History, type ImageBytes, type LspClose, type LspData, type LspSession, type OpenOptions, type SearchHit, type Settings } from './shared';
+import { machineKey, type Cursor, type FileClick, type History, type ImageBytes, type LspClose, type LspData, type LspSession, type OpenOptions, type SearchHit, type Settings } from './shared';
 
 // The keys this plugin brings: `<leader>e` shows the view wherever the keys are, while the other two name no `global`
 // and so answer only while this page holds them — they go out as events, since the file they act on is the one the page
@@ -313,6 +313,22 @@ export function activate(context: MainContext) {
       writeFileSync(`${historyPath}.tmp`, JSON.stringify(history, null, 2));
       renameSync(`${historyPath}.tmp`, historyPath);
     }),
+  );
+
+  // Where the cursor is now: the page holds the live position, so the ask goes out as an event and the tab on show
+  // answers it as a request; a wait no tab answers gives up on its own.
+  let cursorAsk = 0;
+  const cursorWaiters = new Map<number, (cursor: Cursor | undefined) => void>();
+  handlers.push(
+    context.ui.handle('cursor-reply', ({ nonce, cursor }: { nonce: number; cursor?: Cursor }) => {
+      cursorWaiters.get(nonce)?.(cursor);
+    }),
+    context.ui.handle('cursor', () => new Promise<Cursor | undefined>((resolve) => {
+      const nonce = ++cursorAsk;
+      const timer = setTimeout(() => { cursorWaiters.delete(nonce); resolve(undefined); }, 500);
+      cursorWaiters.set(nonce, (cursor) => { clearTimeout(timer); cursorWaiters.delete(nonce); resolve(cursor); });
+      context.ui.publish('cursor-query', { nonce });
+    })),
   );
   return async () => {
     for (const remove of handlers) remove();
