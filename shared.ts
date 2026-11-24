@@ -1,5 +1,6 @@
 import type { FileClick, Profile } from '@lengmoxxl/sdk';
 export type { FileClick } from '@lengmoxxl/sdk';
+import type { UiContext } from '@lengmoxxl/sdk/channel';
 // Where a visited file was left: its cursor and the offset it was scrolled to.
 export type Position = { line: number; column: number; top: number };
 export type HistoryEntry = FileClick & Partial<Position>;
@@ -37,3 +38,20 @@ export type Settings = Profile & { font: Font; fontSizes?: Record<string, number
 export interface Diff { oldText: string; newText: string; notice?: string; tooLarge?: number }
 // What the diff pane asks main for: the machine, the absolute path, and the two sides as the git:// URI names them.
 export interface DiffRequest { machine: FileClick['machine']; path: string; base: string; head: string; oldPath?: string; force?: boolean }
+
+// The smallest edit that turns one text into another, so laying text into a view keeps the caret and the undo history.
+export function editOf(current: string, next: string) {
+  let from = 0;
+  while (from < current.length && from < next.length && current[from] === next[from]) from += 1;
+  let end = 0;
+  while (end < current.length - from && end < next.length - from && current[current.length - 1 - end] === next[next.length - 1 - end]) end += 1;
+  return { from, to: current.length - end, insert: next.slice(from, next.length - end) };
+}
+
+// One watch set: a change to a watched path asks again, and giving up the set clears the paths it held.
+export const watch = (context: UiContext, machine: FileClick['machine'], holder: string, paths: string[], act: (path: string) => void) => {
+  // The plugin can be disposed before either request lands, and the machine can be gone; neither is worth a pageerror.
+  void context.ui.request('watch', { holder, machine, paths }).catch(() => undefined);
+  const off = context.ui.subscribe<string>('changed', (path) => { if (paths.includes(path)) act(path); });
+  return () => { off(); void context.ui.request('watch', { holder, machine, paths: [] }).catch(() => undefined); };
+};

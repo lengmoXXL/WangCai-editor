@@ -15,7 +15,9 @@ import { languageOf, modeFor } from './mode';
 import { markdownPreview, markdownPreviewKeys, markdownPreviewParse, previewImageSource, imageMeasure, type PreviewImageSource } from './preview';
 import { editorTheme } from './theme';
 import { mapVimAction, viewChrome, viewOf } from './view';
-import { fileKey, machineKey, type FileClick, type Font, type History, type HistoryEntry, type ImageBytes, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
+import { parseGitUri } from './uri';
+import { DiffView } from './diff';
+import { editOf, fileKey, machineKey, watch, type FileClick, type Font, type History, type HistoryEntry, type ImageBytes, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
 import './style.css';
 
 // What the tab is called, and the id the window remembers it by when it opens it again.
@@ -87,13 +89,6 @@ Vim.defineEx('write', 'w', (cm) => {
 const serviceFor = (file: FileClick): OpenOptions | undefined => {
   const language = languageOf(file.path);
   return language ? { machine: file.machine, path: file.path, language } : undefined;
-};
-
-const watch = (context: UiContext, machine: FileClick['machine'], holder: string, paths: string[], act: (path: string) => void) => {
-  // The plugin can be disposed before either request lands, and the machine can be gone; neither is worth a pageerror.
-  void context.ui.request('watch', { holder, machine, paths }).catch(() => undefined);
-  const off = context.ui.subscribe<string>('changed', (path) => { if (paths.includes(path)) act(path); });
-  return () => { off(); void context.ui.request('watch', { holder, machine, paths: [] }).catch(() => undefined); };
 };
 
 // Whether the keyboard is in a box being typed into, which keeps its keys to itself.
@@ -586,14 +581,6 @@ const saveDelay = 500;
 const mergeText = (base: string, ours: string, theirs: string) =>
   merge(ours, base, theirs, { stringSeparator: '\n', label: { a: '编辑器', b: '磁盘' } }).result.join('\n');
 
-// The smallest edit that turns one text into another, so laying the disk's text into the view keeps the caret and undo.
-function editOf(current: string, next: string) {
-  let from = 0;
-  while (from < current.length && from < next.length && current[from] === next[from]) from += 1;
-  let end = 0;
-  while (end < current.length - from && end < next.length - from && current[current.length - 1 - end] === next[next.length - 1 - end]) end += 1;
-  return { from, to: current.length - end, insert: next.slice(from, next.length - end) };
-}
 function FileView({ context, file, navigate, back, forward, openSearch, holder, remember, peeking, onRead }: PageProps & { holder: string; remember: Remember; peeking: boolean; onRead: (key?: string) => void }) {
   // The text the next view is built with, which only the first read sets. The read's text comes in a box of its own so
   // that a read bringing back what the last one did still builds the view again.
@@ -953,9 +940,12 @@ function Body({ context, navigate, back, forward, openSearch, workspaceId, file,
   const workspace = workspaceEntry?.path ?? '';
   // Only a different file rebuilds the page.
   const key = fileKey(file);
-  return <div className={searching ? 'editor-body searching' : 'editor-body'}>
-    <FileView key={key} context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} holder={workspaceId ?? ''} remember={remember} peeking={searching} onRead={setReadFile} />
-    {visited && searching && <Search context={context} visited={visited} workspace={workspace} visitedReady={readFile === key && key === fileKey(visited)} peek={peek} navigate={navigate} close={closeSearch} />}
+  const comparison = parseGitUri(file.path);
+  return <div className={searching && !comparison ? 'editor-body searching' : 'editor-body'}>
+    {comparison
+      ? <DiffView key={key} context={context} file={file} uri={comparison} holder={workspaceId ?? ''} />
+      : <FileView key={key} context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} holder={workspaceId ?? ''} remember={remember} peeking={searching} onRead={setReadFile} />}
+    {visited && searching && !comparison && <Search context={context} visited={visited} workspace={workspace} visitedReady={readFile === key && key === fileKey(visited)} peek={peek} navigate={navigate} close={closeSearch} />}
   </div>;
 }
 

@@ -157,3 +157,11 @@
    marks, and a row that moves while it is being typed is harder to read. */
 .search-title b { font-weight: 400; background: color-mix(in srgb, var(--wc-foreground) 16%, transparent); border-radius: 2px; }
 .search-detail { flex-shrink: 0; max-width: 40%; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--wc-muted); }
+
+/* The git comparison pane: a header of its own over the merge view, which scrolls as one box around its two editors. */
+.editor-diff-spacer { flex: 1; }
+.editor-diff-path { flex-shrink: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wc-muted); }
+.editor-diff-count { flex-shrink: 0; padding: 0 6px; color: var(--wc-muted); font-variant-numeric: tabular-nums; }
+.git-editor { flex: 1; min-height: 0; }
+.git-editor .cm-mergeView { height: 100%; overflow: auto; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.git-editor .cm-mergeView:hover { scrollbar-color: color-mix(in srgb, var(--wc-foreground) 20%, transparent) transparent; }
