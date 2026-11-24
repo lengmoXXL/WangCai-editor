@@ -154,6 +154,14 @@ test('nothing is under the selection until a row is chosen', { timeout: 120000 }
   await openSearch(page);
   const firstRow = searchRows(page).first();
   await firstRow.waitFor();
+  const box = await firstRow.boundingBox();
+  await dismissSearch(page);
+  await until(() => editorFocused(page));
+  // Leave the pointer where a result will appear, then open the picker using only the keyboard.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.keyboard.press('Control+f');
+  await firstRow.waitFor();
+  await page.waitForTimeout(400);
   assert.equal(await searchPanel(page).locator('[aria-current]').count(), 0);
   // Enter with nothing under the selection opens nothing: the picker stays, and the page stays on the file it shows.
   await page.keyboard.press('Enter');

@@ -606,7 +606,7 @@ function editOf(current: string, next: string) {
   while (end < current.length - from && end < next.length - from && current[current.length - 1 - end] === next[next.length - 1 - end]) end += 1;
   return { from, to: current.length - end, insert: next.slice(from, next.length - end) };
 }
-function FileView({ context, file, navigate, back, forward, openSearch, holder, remember, peeking }: PageProps & { holder: string; remember: Remember; peeking: boolean }) {
+function FileView({ context, file, navigate, back, forward, openSearch, holder, remember, peeking, onRead }: PageProps & { holder: string; remember: Remember; peeking: boolean; onRead: (key?: string) => void }) {
   // The text the next view is built with, which only the first read sets. The read's text comes in a box of its own so
   // that a read bringing back what the last one did still builds the view again.
   const [text, setText] = useState<{ body: string }>();
@@ -695,6 +695,13 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
     read();
     return () => { alive = false; stop(); };
   }, [context, holder, refreshes]);
+  const key = fileKey(file);
+  const readSettled = text !== undefined || !!readError;
+  useEffect(() => {
+    if (!readSettled) return;
+    onRead(key);
+    return () => onRead(undefined);
+  }, [readSettled, key, onRead]);
   // Leaving the file writes back what the typing left, so nothing is dropped on the way out. This runs only when the page
   // goes away, not when a refresh re-reads: a refresh merges the pending buffer instead.
   useEffect(() => () => {
@@ -754,11 +761,11 @@ const Glass = ({ className }: { className?: string }) => (
 
 // The search picker: the rows it finds under its input, with the page following the row under the selection, so what a row
 // stands for is seen before Enter opens it.
-function Search({ context, visited, workspace, peek, navigate, close }: { context: UiContext; visited: HistoryEntry; workspace: string; peek: (file: FileClick) => void; navigate: (file: FileClick) => void; close: () => void }) {
+function Search({ context, visited, workspace, visitedReady, peek, navigate, close }: { context: UiContext; visited: HistoryEntry; workspace: string; visitedReady: boolean; peek: (file: FileClick) => void; navigate: (file: FileClick) => void; close: () => void }) {
   const [query, setQuery] = useState('');
   // A row is chosen by the user or not at all: until one is, nothing is marked and nothing is followed, so opening the
   // picker does not take the reader away from what they were reading.
-  const [chosen, setChosen] = useState<number>();
+  const [chosen, setChosen] = useState<number | 'match'>();
   // Each source's latest answer, with `undefined` for having none to draw: none has arrived yet, or the query was emptied.
   // An answer stays on show while the next one is on its way.
   const [files, setFiles] = useState<string[]>();
@@ -792,13 +799,15 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
   // The symbols of the file the tab is on, which is the file a symbol row jumps into.
   useEffect(() => {
     if (mode !== 'symbols') return;
+    // A cross-file preview closes the visited document on its server. Restore it before asking for its symbols.
+    if (!visitedReady) { peek(visited); setSymbols(undefined); return; }
     if (!options || !services) { setSymbols([]); return; }
     let alive = true;
     void services.symbols(options)
       .then((found) => { if (alive) { setSymbols(found); clearStatus('symbols'); } })
       .catch((problem: Error) => { if (alive) { setSymbols([]); setStatus({ mode: 'symbols', text: problem.message }); } });
     return () => { alive = false; };
-  }, [mode, options]);
+  }, [mode, options, visitedReady, peek, visited]);
   const asked = useRef(0);
   useEffect(() => {
     // A reply is worth only the query that asked for it: every run of this takes the next id, so a reply that comes back
@@ -856,7 +865,9 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
       .map((one) => ({ ...one.obj, marks: one.indexes })));
   }, [mode, needle, directory, visited.machine, visited.path, files, matches, symbols]);
   const note = status?.mode === mode ? status.text : '';
-  const at = chosen === undefined ? -1 : Math.min(chosen, rows.length - 1);
+  const at = chosen === 'match'
+    ? rows.findIndex((row) => mode !== 'symbols' || !needle || !!row.marks?.length)
+    : Math.min(chosen ?? -1, rows.length - 1);
   useEffect(() => { list.current?.querySelector('[aria-current]')?.scrollIntoView({ block: 'nearest' }); }, [at, rows]);
   // A name typed a letter at a time would otherwise read a file per letter, so the row under the selection is taken
   // once the selection rests.
@@ -890,7 +901,7 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
     <div className="search-head">
       <Glass className="search-glass" />
       <input className="search-input" aria-label="搜索" autoFocus value={query} spellCheck={false} placeholder="搜索文件，-- 后传 rg 参数，> 搜内容，@ 列符号"
-        onChange={(event) => { setQuery(event.target.value); setChosen(0); }}
+        onChange={(event) => { setQuery(event.target.value); setChosen('match'); }}
         onKeyDown={(event) => {
           if (event.key === 'Escape') { event.preventDefault(); close(); }
           else if (event.key === 'Enter') { event.preventDefault(); const row = rows[at]; if (row) navigate(row.target); }
@@ -901,7 +912,7 @@ function Search({ context, visited, workspace, peek, navigate, close }: { contex
     </div>
     {note && <div className="search-note" role="status">{note}</div>}
     <div className="search-list" ref={list}>
-      {rows.map((row, index) => <button key={row.key} type="button" className="search-row" aria-current={index === at || undefined} style={{ '--depth': row.depth ?? 0 } as CSSProperties} onClick={() => navigate(row.target)} onMouseEnter={() => setChosen(index)}>
+      {rows.map((row, index) => <button key={row.key} type="button" className="search-row" aria-current={index === at || undefined} style={{ '--depth': row.depth ?? 0 } as CSSProperties} onClick={() => navigate(row.target)} onMouseMove={() => setChosen(index)}>
         <span className="search-title">{marked(row.title, row.marks)}</span>
         {row.detail && <span className="search-detail">{row.detail}</span>}
       </button>)}
@@ -931,6 +942,7 @@ function EmptyPage({ context, base, navigate, loading, workspaceError }: { conte
 function Body({ context, navigate, back, forward, openSearch, workspaceId, file, visited, searching, remember, closeSearch, peek }: Omit<PageProps, 'file'> & { workspaceId?: string; file?: HistoryEntry; visited?: HistoryEntry; searching: boolean; remember: Remember; closeSearch: () => void; peek: (file: FileClick) => void }) {
   const [loading, setLoading] = useState(false);
   const [workspaceError, setWorkspaceError] = useState('');
+  const [readFile, setReadFile] = useState<string>();
   // The directory of the workspace in front: what a path typed before any file is opened is resolved against, and the
   // root the search panel looks in.
   const [workspaceEntry, setWorkspaceEntry] = useState<FileClick>();
@@ -954,8 +966,8 @@ function Body({ context, navigate, back, forward, openSearch, workspaceId, file,
   // Only a different file rebuilds the page.
   const key = fileKey(file);
   return <div className={searching ? 'editor-body searching' : 'editor-body'}>
-    <FileView key={key} context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} holder={workspaceId ?? ''} remember={remember} peeking={searching} />
-    {visited && searching && <Search context={context} visited={visited} workspace={workspace} peek={peek} navigate={navigate} close={closeSearch} />}
+    <FileView key={key} context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} holder={workspaceId ?? ''} remember={remember} peeking={searching} onRead={setReadFile} />
+    {visited && searching && <Search context={context} visited={visited} workspace={workspace} visitedReady={readFile === key && key === fileKey(visited)} peek={peek} navigate={navigate} close={closeSearch} />}
   </div>;
 }
 

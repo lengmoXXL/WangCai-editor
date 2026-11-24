@@ -332,13 +332,35 @@ test('a server that answers with a tree has its members listed under the holder 
   ]);
   assert.deepEqual(await searchMarks(searchRowNamed(page, treeNames.space)), []);
   assert.deepEqual(await searchMarks(searchRowNamed(page, treeNames.shape)), []);
-  await areaRow.click();
+  assert.equal(await areaRow.getAttribute('aria-current'), 'true');
+  await submitSearch(page);
   // Typing checks the exact cursor column; seeing the line alone would miss an incorrect selectionRange.
   const nameLineText = treeBody.split('\n')[areaNameAt.line];
   await landedOn(page, demo, nameLineText);
   const typedChar = 'X';
   await typeInto(page, typedChar);
   await codeShowing(shownPanel(page), `${nameLineText.slice(0, areaNameAt.character)}${typedChar}${nameLineText.slice(areaNameAt.character)}`).waitFor();
+  assert.deepEqual(errors, []);
+}));
+
+test('switching to @ after a file preview finds symbols in the file where Ctrl+F was opened', { timeout: 90000 }, () => withWindow('wangcai-editor-preview-symbols', lists, async ({ home, page, errors }) => {
+  const origin = join(home, 'editing.ts');
+  const other = 'preview.txt';
+  const otherText = 'another file';
+  const name = 'originFunction';
+  const declaration = `export function ${name}() {}`;
+  writeFileSync(join(home, other), otherText);
+  await showWritten(page, origin, `${answerLine}\n${declaration}\n`, declaration);
+  await lspDot(shownPanel(page), 'open').waitFor();
+  await until(() => editorFocused(page));
+  await page.keyboard.press(pickerKey);
+  await searchRowNamed(page, other).hover();
+  await codeShowing(shownPanel(page), otherText).waitFor();
+  await page.keyboard.type(`@${name}`);
+  await searchRowNamed(page, name).waitFor({ timeout: 10000 });
+  await landedOn(page, origin, declaration);
+  await dismissSearch(page);
+  await landedOn(page, origin, answerLine);
   assert.deepEqual(errors, []);
 }));
 
