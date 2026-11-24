@@ -166,7 +166,7 @@ function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, b
 
 export function DiffView({ context, file, uri, holder, navigate, back, forward, openSearch }: { context: UiContext; file: HistoryEntry; uri: GitUri; holder: string; navigate: Navigate; back?: () => void; forward?: () => void; openSearch: () => void }) {
   const font: Font = (context.host.config as Settings).font;
-  const caret = useRef<Caret>(undefined);
+  const caret = useRef<Caret>(file.line ? { line: file.line, column: file.column ?? 1 } : undefined);
   const jumps = useRef<Jump>(undefined);
   const [layout, setLayout] = useState(readLayout);
   const [diff, setDiff] = useState<Diff>();
