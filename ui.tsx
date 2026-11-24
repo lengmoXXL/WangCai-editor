@@ -14,7 +14,7 @@ import { LanguageServices, type FileSymbol, type LocationFeature, type ServiceSt
 import { languageOf, modeFor } from './mode';
 import { markdownPreview, markdownPreviewKeys, markdownPreviewParse, previewImageSource, imageMeasure, type PreviewImageSource } from './preview';
 import { editorTheme } from './theme';
-import { machineKey, type FileClick, type Font, type History, type HistoryEntry, type ImageBytes, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
+import { fileKey, machineKey, type FileClick, type Font, type History, type HistoryEntry, type ImageBytes, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
 import './style.css';
 
 // What the tab is called, and the id the window remembers it by when it opens it again.
@@ -52,7 +52,6 @@ const pages = new Map<History, Navigate>();
 const visit = (target: Target, machine: FileClick['machine']): FileClick =>
   ({ type: 'file', machine, path: target.path, line: target.line, column: target.column });
 
-const fileKey = (file: FileClick) => `${machineKey(file.machine)}|${file.path}`;
 // The key a tab's history is kept under: the workspace it is shown in, and no workspace for a tab the shell has not given
 // one yet.
 const workspaceKey = (workspaceId?: string) => workspaceId ?? '';
@@ -312,7 +311,7 @@ const imageSourceFor = (context: UiContext, file: FileClick): PreviewImageSource
   return async (url) => {
     const path = decodeURIComponent(url.split(/[?#]/)[0]);
     const abs = resolveImage(base, path);
-    const key = `${machineKey(file.machine)}|${abs}`;
+    const key = fileKey({ machine: file.machine, path: abs });
     let pending = imageCache.get(key);
     if (!pending) {
       pending = context.ui.request<ImageBytes>('read-image', { machine: file.machine, path: abs })

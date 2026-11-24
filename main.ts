@@ -191,21 +191,24 @@ export function activate(context: MainContext) {
     }
   };
 
-  const handlers = ['read', 'resolve'].map((method) => context.ui.handle(method, ({ machine, path, sessionId, base }: { machine: FileClick['machine']; path?: string; sessionId?: string; base?: string }) =>
-    withConnection(machine, async (connection) => {
-      if (method === 'resolve') {
+  const handlers = [
+    context.ui.handle('read', ({ machine, path }: { machine: FileClick['machine']; path: string }) =>
+      withConnection(machine, async (connection) => {
+        const bytes = await connection.fs.readFile(path);
+        let text: string;
+        try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+        catch { throw new Error('暂不支持二进制或非 UTF-8 文件'); }
+        if (/[\x00-\x08\x0b\x0e-\x1f]/.test(text)) throw new Error('暂不支持二进制文件');
+        return text;
+      })),
+    context.ui.handle('resolve', ({ machine, path, sessionId, base }: { machine: FileClick['machine']; path?: string; sessionId?: string; base?: string }) =>
+      withConnection(machine, async (connection) => {
         const target = path === undefined ? await connection.pty.cwd(sessionId!) : posix.resolve(base!, path);
         const stat = await connection.fs.stat(target);
         if (!stat) throw new Error(`路径不存在: ${target}`);
         return { type: stat.isDirectory ? 'directory' : 'file', machine, path: target };
-      }
-      const bytes = await connection.fs.readFile(path!);
-      let text: string;
-      try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
-      catch { throw new Error('暂不支持二进制或非 UTF-8 文件'); }
-      if (/[\x00-\x08\x0b\x0e-\x1f]/.test(text)) throw new Error('暂不支持二进制文件');
-      return text;
-    })));
+      })),
+  ];
 
   // An image the preview draws: its bytes cross as base64 with the type its extension claims, since the page cannot read
   // the machine's disk for an <img> of its own. A ceiling keeps one huge file from crossing the channel whole.

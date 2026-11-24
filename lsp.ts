@@ -2,7 +2,7 @@ import { LSPClient, hoverTooltips, serverDiagnostics, type Transport } from '@co
 import { tooltips } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
 import type { UiContext } from '@lengmoxxl/sdk/channel';
-import { machineKey, type FileClick, type LspData, type LspExit, type LspLog, type LspSession, type OpenOptions } from './shared';
+import { fileKey, type FileClick, type LspData, type LspExit, type LspLog, type LspSession, type OpenOptions } from './shared';
 
 // The location features this plugin asks for itself, each with the request it sends and the capability a server answers it
 // under: an answer may name a file the window has not opened, which the client's own jumps would have to read in first.
@@ -294,7 +294,6 @@ export class LanguageServices {
     for (const [session, running] of [...this.bySession]) if (running.unexpected) void this.revive(session, running);
   }
 
-  private keyOf(file: Pick<FileClick, 'machine' | 'path'>) { return `${machineKey(file.machine)}|${file.path}`; }
 
   // The extension that ties this file's editor to its server: the hover and the diagnostics of this plugin come from it.
   extension(options: OpenOptions): Extension {
@@ -305,7 +304,7 @@ export class LanguageServices {
   // Starts or reuses the server for a file, so the editor highlights and hovers from the same server. `wanted` is false
   // when a revival asks for a session a view may have left meanwhile.
   async open(options: OpenOptions, wanted = true) {
-    const key = this.keyOf(options);
+    const key = fileKey(options);
     const info = await this.context.ui.request<LspSession | null>('lsp-open', options)
       .catch((problem: Error) => {
         // Only a file whose server never came up is read from this: a revival that fails still has the closed session the
@@ -350,7 +349,7 @@ export class LanguageServices {
   // The session a file speaks to. A session that was replaced by a new server answers with the new one, so a file that
   // stayed open keeps jumping.
   session(options: OpenOptions) {
-    const found = this.sessionOf(this.keyOf(options));
+    const found = this.sessionOf(fileKey(options));
     return found && !found.closed ? found : undefined;
   }
 
@@ -412,7 +411,7 @@ export class LanguageServices {
 
   // What the status dot shows for one file: the service behind it — the server its session runs, or the reason none does.
   status(options: OpenOptions): ServiceStatus | undefined {
-    const key = this.keyOf(options);
+    const key = fileKey(options);
     const recorded = this.sessionOf(key);
     if (recorded && !recorded.closed) return this.describe(recorded);
     const missing = this.missing.get(key);
@@ -425,7 +424,7 @@ export class LanguageServices {
   // The last line the server behind this file said that the page has not said yet: it is taken once, so a page opened
   // again does not say it again.
   takeMessage(options: OpenOptions) {
-    const message = this.sessionOf(this.keyOf(options))?.message;
+    const message = this.sessionOf(fileKey(options))?.message;
     if (!message || message.shown) return undefined;
     message.shown = true;
     return message;
@@ -475,7 +474,7 @@ export class LanguageServices {
     for (const [session, running] of [...this.bySession]) {
       // What keeps a server alive is a file opened on it, which each file says for itself: a file of a nested root belongs to
       // the server of that root, not to the one whose directory happens to hold it too.
-      if (openFiles.some((file) => this.byFile.get(this.keyOf(file)) === session)) continue;
+      if (openFiles.some((file) => this.byFile.get(fileKey(file)) === session)) continue;
       for (const [key, named] of [...this.byFile]) if (named === session) this.byFile.delete(key);
       this.bySession.delete(session);
       this.logs.delete(session);

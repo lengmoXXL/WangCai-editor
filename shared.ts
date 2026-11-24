@@ -25,6 +25,8 @@ export type ImageBytes = { mime: string; data: string };
 
 // The identity of a machine: the id, plus the host that tells two machines with one id apart.
 export const machineKey = (machine: FileClick['machine']) => `${machine.id}|${machine.host ?? ''}`;
+// The identity of a file on a machine: the key a view, a service, and a cache all name it by.
+export const fileKey = (file: Pick<FileClick, 'machine' | 'path'>) => `${machineKey(file.machine)}|${file.path}`;
 
 // The config this plugin accepts: main.ts declares a schema for the same fields.
 export type Font = { family: string; size: number; lineHeight?: number };
