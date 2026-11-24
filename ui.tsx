@@ -1058,7 +1058,7 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       }),
       context.global.subscribe('editor:reveal', () => {
         const file = showing();
-        if (file && container.checkVisibility()) navigate({ type: 'directory', machine: file.machine, path: directoryOf(file) });
+        if (file && container.checkVisibility()) void context.global.publish('files:reveal', file);
       }),
       // Where the cursor is, asked by the main process for a key bound in init.ts: the entry keeps the position live,
       // so the tab on show answers with the same place the page reads.

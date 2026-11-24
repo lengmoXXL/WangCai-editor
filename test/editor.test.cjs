@@ -66,6 +66,8 @@ test('the leader keys hand the file on show to the preview, and its directory to
   const directory = join(home, 'leader');
   mkdirSync(directory);
   const file = join(directory, 'shown.ts');
+  // A sibling that sorts first, so the cursor landing on the revealed file is the reveal's doing, not the first entry's.
+  writeFileSync(join(directory, 'aaa.md'), '');
   await showWritten(page, file, '');
   // What the preview is handed is taken off the bus: the press is what is under test, not that view.
   await page.evaluate(() => {
@@ -78,6 +80,8 @@ test('the leader keys hand the file on show to the preview, and its directory to
   // The same leader, then `gf`: files opens the directory the file sits in.
   for (const key of [leader, 'g', 'f']) await page.keyboard.press(key);
   await filesColumn(page, directory).getByRole('button', { name: 'shown.ts', exact: true }).waitFor();
+  // The files cursor holds the revealed file itself, not the column's first entry.
+  await until(async () => (await page.locator('.file-list button[data-cursor] .file-name').innerText()) === 'shown.ts');
   // They are this page's keys, so a press made with the keyboard nowhere in it answers nothing.
   await page.evaluate(() => document.activeElement?.blur());
   for (const key of [leader, 'g', 'p']) await page.keyboard.press(key);
