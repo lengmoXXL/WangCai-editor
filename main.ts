@@ -2,7 +2,8 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import type { MachineConnection, Process } from '@lengmoxxl/sdk';
 import type { MainContext } from '@lengmoxxl/sdk/channel';
-import { machineKey, type Cursor, type FileClick, type History, type ImageBytes, type LspClose, type LspData, type LspSession, type OpenOptions, type SearchHit, type Settings } from './shared';
+import { machineKey, type Cursor, type DiffRequest, type FileClick, type History, type ImageBytes, type LspClose, type LspData, type LspSession, type OpenOptions, type SearchHit, type Settings } from './shared';
+import { readDiff, type RunGit } from './git';
 
 // The keys this plugin brings: `<leader>e` shows the view wherever the keys are, while the other two name no `global`
 // and so answer only while this page holds them — they go out as events, since the file they act on is the one the page
@@ -228,6 +229,21 @@ export function activate(context: MainContext) {
   // What the page writes back: the text it holds, whole, over the file it was read from.
   handlers.push(context.ui.handle('write', ({ machine, path, text }: { machine: FileClick['machine']; path: string; text: string }) =>
     withConnection(machine, (connection) => connection.fs.writeFile(path, Buffer.from(text, 'utf8')))));
+
+  // The two sides of a comparison the diff pane reads: the repository root is found from the file's directory, and the
+  // sides are resolved as the git:// URI names them.
+  handlers.push(context.ui.handle('diff', ({ machine, path, base, head, oldPath, force }: DiffRequest) =>
+    withConnection(machine, async (connection) => {
+      const run: RunGit = async (cwd, args) => {
+        const result = await connection.subprocess.exec('git', ['--literal-pathspecs', '-c', 'color.ui=false', '-c', 'core.fsmonitor=false', ...args], { cwd, env: { GIT_OPTIONAL_LOCKS: '0' } });
+        return { stdout: Buffer.from(result.stdout), stderr: Buffer.from(result.stderr).toString(), code: result.code };
+      };
+      const toplevel = await run(posix.dirname(path), ['rev-parse', '--show-toplevel']);
+      if (toplevel.code !== 0) throw new Error(toplevel.stderr.trim() || 'Not a git repository');
+      const root = toplevel.stdout.toString().trim();
+      const relative = (p: string) => posix.relative(root, p);
+      return readDiff({ root, path: relative(path), oldPath: oldPath ? relative(oldPath) : undefined, base, head, force }, run, p => connection.fs.readFile(p));
+    })));
 
   // The paths a file search offers: what rg lists under a workspace, which leaves out what git ignores, with the flags the
   // page hands it.

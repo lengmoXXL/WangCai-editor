@@ -32,3 +32,8 @@ export const fileKey = (file: Pick<FileClick, 'machine' | 'path'>) => `${machine
 export type Font = { family: string; size: number; lineHeight?: number };
 type ServerOverride = { command?: string[]; markers?: string[] };
 export type Settings = Profile & { font: Font; fontSizes?: Record<string, number>; lsp?: Record<string, ServerOverride | false> };
+
+// A comparison of two sides of a file, as the diff pane reads it: the text of each, or a note why it cannot be read.
+export interface Diff { oldText: string; newText: string; notice?: string; tooLarge?: number }
+// What the diff pane asks main for: the machine, the absolute path, and the two sides as the git:// URI names them.
+export interface DiffRequest { machine: FileClick['machine']; path: string; base: string; head: string; oldPath?: string; force?: boolean }

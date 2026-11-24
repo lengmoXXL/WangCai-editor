@@ -1,8 +1,8 @@
 import { history as undoHistory, indentMore } from '@codemirror/commands';
 import { indentUnit } from '@codemirror/language';
 import { Compartment, EditorState, Prec, type Extension } from '@codemirror/state';
-import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from '@codemirror/view';
-import { Vim, getCM, vim, type CodeMirrorV } from '@replit/codemirror-vim';
+import { EditorView, keymap } from '@codemirror/view';
+import { Vim, getCM, type CodeMirrorV } from '@replit/codemirror-vim';
 import { createRoot } from 'react-dom/client';
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import fuzzysort from 'fuzzysort';
@@ -14,6 +14,7 @@ import { LanguageServices, type FileSymbol, type LocationFeature, type ServiceSt
 import { languageOf, modeFor } from './mode';
 import { markdownPreview, markdownPreviewKeys, markdownPreviewParse, previewImageSource, imageMeasure, type PreviewImageSource } from './preview';
 import { editorTheme } from './theme';
+import { mapVimAction, viewChrome, viewOf } from './view';
 import { fileKey, machineKey, type FileClick, type Font, type History, type HistoryEntry, type ImageBytes, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
 import './style.css';
 
@@ -62,10 +63,6 @@ const directoryOf = (file: FileClick) => (file.type === 'directory' ? file.path 
 // The page the editor hangs from: the element the Core hands the keys to and takes them back from.
 const pageOf = (element: HTMLElement | null) => element?.closest<HTMLElement>('[data-plugin]');
 
-// The view behind the vim adapter the keys are answered with: `cm6` is the field it carries the CodeMirror view in, which
-// its own types do not say.
-const viewOf = (cm: unknown) => (cm as { cm6?: EditorView }).cm6;
-
 // A key the vim layer answers asks the view it was typed into.
 const pageKeys = new Map<EditorView, { jump: (act: LocationFeature) => void; say: (text: string) => void }>();
 
@@ -78,16 +75,8 @@ const vimCommands: [keys: string, act: LocationFeature][] = [
   ['gr', 'references'],
 ];
 
-// The keys are defined once for the whole window, not per view, since the vim layer is one state shared by every view.
 // `<C-s>` is left to the library, which writes nowhere: the file is written back on its own.
-for (const [keys, act] of vimCommands) {
-  const name = `wangcai-${act}`;
-  Vim.defineAction(name, (cm) => {
-    const view = viewOf(cm);
-    if (view) pageKeys.get(view)?.jump(act);
-  });
-  Vim.mapCommand(keys, 'action', name, {}, { context: 'normal' });
-}
+for (const [keys, act] of vimCommands) mapVimAction(keys, `wangcai-${act}`, (view) => pageKeys.get(view)?.jump(act));
 // `:w` says the file writes itself back rather than saving, so the key is not mistaken for a write that does nothing.
 Vim.defineEx('write', 'w', (cm) => {
   const view = viewOf(cm);
@@ -1095,9 +1084,6 @@ export async function mount(_container: HTMLElement, context: UiContext) {
   fontSizes = profile.fontSizes ?? {};
   theme = profile.theme;
   bus = context.global;
-  // The vim keys over the text, which the page may edit and write back, and the history behind its undo. The selection a
-  // visual mode covers is drawn here, because the vim keys blank the browser's own ::selection without drawing one of
-  // their own.
   // Outside insert mode Tab is not typing: leave it to vim and the shell's focus walk.
   const tab = Prec.high(keymap.of([{
     key: 'Tab',
@@ -1110,7 +1096,7 @@ export async function mount(_container: HTMLElement, context: UiContext) {
       return true;
     },
   }]));
-  chrome = [tab, vim(), lineNumbers(), highlightActiveLine(), drawSelection(), undoHistory(),
+  chrome = [tab, ...viewChrome, undoHistory(),
     EditorState.tabSize.of(2), indentUnit.of('  ')];
   services = new LanguageServices(context);
   for (const [key, history] of Object.entries(await context.ui.request<Record<string, History>>('history'))) histories.set(key, history);
