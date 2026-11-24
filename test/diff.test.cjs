@@ -29,12 +29,12 @@ test('a git:// comparison opens a read-only diff with both sides, vim motions an
   const file = repoWithChange(home);
   await openEditorWorkspace(page);
   await clickFile(page, { type: 'file', machine, path: `git://${file}@:index~:worktree` });
-  const readingButton = page.getByRole('button', { name: /^阅读方式/ });
+  const gear = page.getByRole('button', { name: '差异设置' });
   const forceReading = async (label) => {
-    for (let at = 0; at < 3; at += 1) {
-      if (await readingButton.getAttribute('aria-label') === `阅读方式 ${label}`) return;
-      await readingButton.click();
-    }
+    await gear.click();
+    const reading = page.locator('.code-menu button').filter({ hasText: /^阅读方式/ });
+    for (let at = 0; at < 3 && (await reading.innerText()) !== `阅读方式：${label}`; at += 1) await reading.click();
+    await page.keyboard.press('Escape');
   };
   await forceReading('双栏');
   // Both sides draw: the index holds the committed text, the worktree the change.
@@ -52,11 +52,16 @@ test('a git:// comparison opens a read-only diff with both sides, vim motions an
   await page.keyboard.press('g'); await page.keyboard.press('g');
   await page.keyboard.type(']c');
   await lineShown(page, sideB, "const greet = 'hello';");
-  assert.match(await page.locator('.editor-diff-count').innerText(), /1 处改动/);
+  assert.match(await gear.getAttribute('title'), /1 处改动/);
 
   // The reading toggle draws the inline view, a single editor rather than the split pair.
   await forceReading('单栏');
   await until(() => page.locator(`${diffHost} > .cm-editor`).count().then(n => n > 0));
   assert.equal(await page.locator(`${diffHost} .cm-mergeView`).count(), 0, 'inline draws no split merge view');
+  // gf leaves the comparison for the worktree file as a normal editable view, sharing the same address bar.
+  await page.locator(`${diffHost} .cm-content`).focus();
+  await page.keyboard.type('gf');
+  await until(() => page.locator('.editor-diff').count().then(n => n === 0));
+  assert.equal(await page.locator('.editor-path').inputValue(), file);
   assert.deepEqual(errors, []);
 }));

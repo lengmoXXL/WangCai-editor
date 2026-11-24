@@ -10,12 +10,16 @@ import type { UiContext } from '@lengmoxxl/sdk/channel';
 import { editorTheme } from './theme';
 import { modeFor } from './mode';
 import { mapVimAction, viewChrome } from './view';
-import { buildGitUri, type GitUri } from './uri';
+import type { GitUri } from './uri';
 import { editOf, watch, type Diff, type Font, type HistoryEntry, type Settings } from './shared';
+import { Navigation, Notice, Overlay, useNotice, type Navigate } from './chrome';
 
 // ]c and [c walk the changes the way vim's diff mode does, a count walking that many and wrapping round the ends.
 mapVimAction(']c', 'wangcai-editor-next-change', (view, repeat) => { for (let at = 0; at < repeat; at += 1) goToNextChunk(view); });
 mapVimAction('[c', 'wangcai-editor-previous-change', (view, repeat) => { for (let at = 0; at < repeat; at += 1) goToPreviousChunk(view); });
+// gf opens the worktree file as a normal editable view, the way vim's goto-file leaves the diff for the file itself.
+const diffOpen = new Map<EditorView, () => void>();
+mapVimAction('gf', 'wangcai-editor-open-file', (view) => diffOpen.get(view)?.());
 
 const readingOrder = ['auto', 'split', 'inline'] as const;
 type Reading = typeof readingOrder[number];
@@ -39,9 +43,9 @@ type Held = {
 };
 
 // The merge view itself, mounted only once the two sides are read so its host is always on screen for the effects.
-function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, blocks }: {
+function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, blocks, openFile }: {
   context: UiContext; diff: Diff; path: string; reading: Reading; wrap: boolean; font: Font;
-  caret: RefObject<Caret | undefined>; jumps: RefObject<Jump | undefined>; blocks: (count: number) => void;
+  caret: RefObject<Caret | undefined>; jumps: RefObject<Jump | undefined>; blocks: (count: number) => void; openFile: () => void;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const held = useRef<Held>(undefined);
@@ -133,10 +137,11 @@ function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, b
     host.addEventListener('focusout', leaveInsert);
     if (keptFocus.current) side.focus();
     held.current = { side, write, count, rewrap, reveal, now, seat };
+    diffOpen.set(side, openFile);
     return () => {
       keptScroll.current = scroller.scrollTop;
       keptFocus.current = side.hasFocus;
-      jumps.current = undefined;
+      jumps.current = undefined; diffOpen.delete(side);
       host.removeEventListener('focusout', leaveInsert); offTheme();
       destroy(); held.current = undefined;
     };
@@ -159,7 +164,7 @@ function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, b
   return <div className="git-editor" ref={element} />;
 }
 
-export function DiffView({ context, file, uri, holder }: { context: UiContext; file: HistoryEntry; uri: GitUri; holder: string }) {
+export function DiffView({ context, file, uri, holder, navigate, back, forward, openSearch }: { context: UiContext; file: HistoryEntry; uri: GitUri; holder: string; navigate: Navigate; back?: () => void; forward?: () => void; openSearch: () => void }) {
   const font: Font = (context.host.config as Settings).font;
   const caret = useRef<Caret>(undefined);
   const jumps = useRef<Jump>(undefined);
@@ -169,6 +174,8 @@ export function DiffView({ context, file, uri, holder }: { context: UiContext; f
   const [blocks, setBlocks] = useState(0);
   const [force, setForce] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [notice, report] = useNotice();
+  const [menu, setMenu] = useState(false);
   const patch = (next: Partial<DiffLayout>) => { writeLayout(next); setLayout(readLayout()); };
 
   // The two sides are read when the pane opens and again when the worktree side changes on disk.
@@ -196,33 +203,27 @@ export function DiffView({ context, file, uri, holder }: { context: UiContext; f
   };
 
   return <section className="editor editor-diff" aria-label="Git 差异">
-    <header className="editor-header">
-      <span className="editor-diff-path" title={buildGitUri(uri.path, uri.base, uri.head, uri.oldPath)}>{uri.path.split('/').pop()}</span>
-      <span className="editor-diff-spacer" />
-      <button className="editor-icon" aria-label={`阅读方式 ${readings[layout.reading]}`} title={`阅读方式：${readings[layout.reading]}（点击切换）`}
-        onClick={() => patch({ reading: readingOrder[(readingOrder.indexOf(layout.reading) + 1) % readingOrder.length] })}>
-        <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v9h-11z"/><path d="M8 3.5v9" strokeDasharray="2 2"/></svg>
-      </button>
-      <button className="editor-icon" aria-label="长行折行" aria-pressed={layout.wrap} onClick={() => patch({ wrap: !layout.wrap })}>
-        <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M2.5 8h8a2 2 0 1 1 0 4H8M2.5 12h3"/><path d="M9.4 10.6 8 12l1.4 1.4"/></svg>
-      </button>
-      <button className="editor-icon" aria-label="打开文件" title={uri.head === ':empty' ? '文件已删除' : '打开文件（工作区版本）'} disabled={uri.head === ':empty'} onClick={openFile}>
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M9 13.5H2.5v-11h5l3 3V7M7.5 2.5v3h3M7 10h7m-3-3 3 3-3 3"/></svg>
-      </button>
-      <button className="editor-icon" aria-label="上一处改动" title="上一处改动（[c）" disabled={!blocks} onClick={() => jumps.current?.previous()}>
-        <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5 3.5 8M8 3.5 12.5 8M8 3.5v9"/></svg>
-      </button>
-      <button className="editor-icon" aria-label="下一处改动" title="下一处改动（]c）" disabled={!blocks} onClick={() => jumps.current?.next()}>
-        <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.5 3.5 8M8 12.5 12.5 8M8 12.5v-9"/></svg>
-      </button>
-      <span className="editor-diff-count">{blocks ? `${blocks} 处改动` : ''}</span>
-    </header>
+    <Navigation context={context} file={{ ...file, path: uri.path }} navigate={navigate} back={back} forward={forward} openSearch={openSearch}
+      dirty={false} refresh={() => setRefresh(value => value + 1)} report={report} refreshTitle="重读差异"
+      menu={<>
+        <button className="editor-icon" aria-label="差异设置" title={`差异设置${blocks ? `（${blocks} 处改动）` : ''}`} onClick={() => setMenu(true)}>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg>
+        </button>
+        {menu && <Overlay className="code-menu" role="menu" label="差异设置" at={{ right: 8, top: 36 }} onClose={() => setMenu(false)}>
+          <button onClick={() => patch({ reading: readingOrder[(readingOrder.indexOf(layout.reading) + 1) % readingOrder.length] })}>{`阅读方式：${readings[layout.reading]}`}</button>
+          <button aria-pressed={layout.wrap} onClick={() => patch({ wrap: !layout.wrap })}>长行折行</button>
+          <button disabled={!blocks} onClick={() => jumps.current?.previous()}>上一处改动（[c）</button>
+          <button disabled={!blocks} onClick={() => jumps.current?.next()}>下一处改动（]c）</button>
+          <button disabled={uri.head === ':empty'} onClick={openFile}>打开文件（gf）</button>
+        </Overlay>}
+      </>} />
     <div className="editor-main">
+      <Notice text={notice} />
       {error ? <div className="file-message" role="alert">{error}</div>
         : diff?.notice ? <div className="file-message">{diff.notice}</div>
         : diff?.tooLarge ? <div className="file-message">文件过大（{Math.ceil(diff.tooLarge / 1024 / 1024)} MB）<button onClick={() => setForce(true)}>仍然加载</button></div>
         : !diff ? <div className="file-message">正在读取…</div>
-        : <DiffSurface context={context} diff={diff} path={uri.path} reading={layout.reading} wrap={layout.wrap} font={font} caret={caret} jumps={jumps} blocks={setBlocks} />}
+        : <DiffSurface context={context} diff={diff} path={uri.path} reading={layout.reading} wrap={layout.wrap} font={font} caret={caret} jumps={jumps} blocks={setBlocks} openFile={openFile} />}
     </div>
   </section>;
 }

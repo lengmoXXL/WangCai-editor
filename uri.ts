@@ -4,9 +4,6 @@
 // ancestry like HEAD~3.
 export interface GitUri { path: string; base: string; head: string; oldPath?: string }
 
-export const buildGitUri = (path: string, base: string, head: string, oldPath?: string) =>
-  `git://${path}@${base}~${head}${oldPath ? `?old=${oldPath}` : ''}`;
-
 export const parseGitUri = (uri: string): GitUri | undefined => {
   if (!uri.startsWith('git://')) return undefined;
   const [rest, query] = uri.slice('git://'.length).split('?');
