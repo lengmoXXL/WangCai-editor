@@ -35,6 +35,9 @@ let services: LanguageServices | undefined;
 const histories = new Map<string, History>();
 // The most the tab remembers of where it has been: the oldest visits go once there are more than this.
 const historyCeiling = 200;
+// The text a page last held, by file, so a jump back shows it at once while the disk is read again quietly.
+const textCache = new Map<string, { body: string; baseline: string; disk: string }>();
+const textCacheCeiling = 50;
 // A jump records the place it leaves and the place it lands on, so the moves made in one turn write the history once, on
 // the turn after them; a tab closing and the plugin going away have no turn after them to wait for.
 let pendingSave: ReturnType<typeof setTimeout> | undefined;
@@ -462,15 +465,16 @@ const mergeText = (base: string, ours: string, theirs: string) =>
   merge(ours, base, theirs, { stringSeparator: '\n', label: { a: '编辑器', b: '磁盘' } }).result.join('\n');
 
 function FileView({ context, file, navigate, back, forward, openSearch, holder, remember, peeking, onRead }: PageProps & { holder: string; remember: Remember; peeking: boolean; onRead: (key?: string) => void }) {
-  // The text the next view is built with, which only the first read sets. The read's text comes in a box of its own so
+  // The text the next view is built with, which the first read or the last visit's cache sets. The read's text comes in a box of its own so
   // that a read bringing back what the last one did still builds the view again.
-  const [text, setText] = useState<{ body: string }>();
+  const cached = textCache.get(fileKey(file));
+  const [text, setText] = useState<{ body: string } | undefined>(() => cached && { body: cached.body });
   // The text the buffer and the disk last agreed on: the ancestor a merge is weighed against.
-  const baseline = useRef('');
+  const baseline = useRef(cached?.baseline ?? '');
   // What the view holds now, and what the disk holds now: a write is only asked for when the two differ.
-  const pageText = useRef('');
-  const disk = useRef('');
-  const loaded = useRef(false);
+  const pageText = useRef(cached?.body ?? '');
+  const disk = useRef(cached?.disk ?? '');
+  const loaded = useRef(!!cached);
   // The text this page last put in the file, and how many times it has done so: a read still on its way when a write
   // lands is answering about the file as it was before it.
   const sent = useRef('');
@@ -478,7 +482,7 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
   // A read that failed leaves nothing to show; a write that failed is said over the page, with the text still on it.
   const [readError, setReadError] = useState('');
   const [notice, report] = useNotice();
-  const [dirty, setDirty] = useState(false);
+  const [dirty, setDirty] = useState(() => !!cached && cached.body !== cached.disk);
   const markdown = languageOf(file.path) === 'markdown';
   const [preview, setPreview] = useState(markdown);
   const main = useRef<HTMLDivElement>(null);
@@ -561,7 +565,14 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
   // goes away, not when a refresh re-reads: a refresh merges the pending buffer instead.
   useEffect(() => () => {
     clearTimeout(saveTimer.current);
-    if (loaded.current) write(pageText.current);
+    if (loaded.current) {
+      write(pageText.current);
+      const key = fileKey(file);
+      textCache.delete(key);
+      textCache.set(key, { body: pageText.current, baseline: baseline.current, disk: disk.current });
+      const oldest = textCache.keys().next().value;
+      if (textCache.size > textCacheCeiling && oldest !== undefined) textCache.delete(oldest);
+    }
   }, []);
   const editing: Editing = {
     onDoc(edited) {
