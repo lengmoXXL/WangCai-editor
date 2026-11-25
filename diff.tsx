@@ -4,7 +4,6 @@ import { ChangeSet, Compartment, EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { MergeView, getChunks, getOriginalDoc, goToNextChunk, goToPreviousChunk, originalDocChangeEffect, unifiedMergeView } from '@codemirror/merge';
 import { Vim, getCM, type CodeMirrorV } from '@replit/codemirror-vim';
-import { bindKeys } from '@lengmoxxl/sdk/keys';
 import type { FileClick, Theme } from '@lengmoxxl/sdk';
 import type { UiContext } from '@lengmoxxl/sdk/channel';
 import { editorTheme } from './theme';
@@ -192,14 +191,6 @@ export function DiffView({ context, file, uri, holder, navigate, back, forward, 
     const stop = worktree ? watch(context, file.machine, `diff:${holder}:${uri.path}`, [uri.path], () => setRefresh(value => value + 1)) : () => {};
     return () => { alive = false; stop(); };
   }, [context, file.machine, uri.path, uri.base, uri.head, uri.oldPath, force, refresh, holder]);
-
-  // Ctrl+Shift+h hands the keys back to the Git list, which is a view of its own now.
-  useEffect(() => {
-    const unbind = bindKeys(document.body, [
-      { keys: '<C-S-h>', run: () => { void context.global.publish('core:show-view', { plugin: 'git' }); void context.global.publish('git:focus-rail', null); } },
-    ], { fields: 'all' });
-    return unbind;
-  }, [context]);
 
   const openFile = () => {
     void context.global.publish('onclick', { type: 'file', machine: file.machine, path: uri.path, line: caret.current?.line, column: caret.current?.column } satisfies FileClick);
