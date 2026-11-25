@@ -148,7 +148,7 @@ function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, 
     jumps.current = { next: () => goToNextChunk(active), previous: () => goToPreviousChunk(active) };
     blocks(count());
     // C-w h/l visit the other buffer as its own history entry, so C-o/C-i (the tab history) walk back between them.
-    const switchSide = (side: 'a' | 'b') => navigate({ type: 'file', machine: entryRef.current.machine, path: entryRef.current.path, side });
+    const switchSide = (side: 'a' | 'b') => { const c = now(); navigate({ type: 'file', machine: entryRef.current.machine, path: entryRef.current.path, side, line: c.line, column: c.column }); };
     // A press that leaves the diff ends an insert mode still open, as the editor ends one on the way out.
     const leaveInsert = (event: FocusEvent) => {
       if (event.relatedTarget instanceof Node && host.contains(event.relatedTarget)) return;
