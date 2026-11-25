@@ -18,7 +18,7 @@ import { mapVimAction, viewChrome, viewOf } from './view';
 import { parseGitUri } from './uri';
 import { DiffView } from './diff';
 import { editOf, fileKey, machineKey, watch, type FileClick, type Font, type History, type HistoryEntry, type ImageBytes, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
-import { Address, Glass, Header, Navigation, Notice, Overlay, directoryOf, useNotice, type Navigate, type PageProps, type Remember } from './chrome';
+import { Address, Glass, Header, Navigation, Notice, Overlay, directoryOf, pageOf, useNotice, writing, type Navigate, type PageProps, type Remember } from './chrome';
 import './style.css';
 
 // What the tab is called, and the id the window remembers it by when it opens it again.
@@ -60,9 +60,6 @@ const visit = (target: Target, machine: FileClick['machine']): FileClick =>
 // one yet.
 const workspaceKey = (workspaceId?: string) => workspaceId ?? '';
 
-// The page the editor hangs from: the element the Core hands the keys to and takes them back from.
-const pageOf = (element: HTMLElement | null) => element?.closest<HTMLElement>('[data-plugin]');
-
 // A key the vim layer answers asks the view it was typed into.
 const pageKeys = new Map<EditorView, { jump: (act: LocationFeature) => void; say: (text: string) => void }>();
 
@@ -88,9 +85,6 @@ const serviceFor = (file: FileClick): OpenOptions | undefined => {
   const language = languageOf(file.path);
   return language ? { machine: file.machine, path: file.path, language } : undefined;
 };
-
-// Whether the keyboard is in a box being typed into, which keeps its keys to itself.
-const writing = (target: EventTarget | null) => target instanceof HTMLElement && ['INPUT', 'TEXTAREA'].includes(target.tagName);
 
 // A place in a file, counted from zero the way a server is asked about it.
 type Place = { line: number; character: number };

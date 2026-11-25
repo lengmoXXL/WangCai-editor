@@ -63,5 +63,13 @@ test('a git:// comparison opens a read-only diff with both sides, vim motions an
   await page.keyboard.type('gf');
   await until(() => page.locator('.editor-diff').count().then(n => n === 0));
   assert.equal(await page.locator('.editor-path').inputValue(), file);
+  // Ctrl+O walks back to the comparison, which takes the keyboard again so its motions answer.
+  await page.keyboard.press('Control+o');
+  await until(() => page.locator(diffHost).count().then(n => n > 0));
+  await until(() => page.evaluate((sel) => document.activeElement?.closest(sel) !== null, diffHost));
+  const cursorTop = () => page.locator(`${diffHost} .cm-fat-cursor.cm-cursor-primary`).boundingBox().then(box => box?.y);
+  const before = await cursorTop();
+  await page.keyboard.type('j');
+  await until(async () => (await cursorTop()) !== before);
   assert.deepEqual(errors, []);
 }));

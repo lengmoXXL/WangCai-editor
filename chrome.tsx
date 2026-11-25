@@ -11,6 +11,12 @@ export type PageProps = { context: UiContext; file: HistoryEntry; navigate: Navi
 // The directory a visit points into: a directory is its own, and a file's is the one it sits in.
 export const directoryOf = (file: FileClick) => (file.type === 'directory' ? file.path : file.path.slice(0, file.path.lastIndexOf('/')) || '/');
 
+// The page the editor hangs from: the element the Core hands the keys to and takes them back from.
+export const pageOf = (element: HTMLElement | null) => element?.closest<HTMLElement>('[data-plugin]');
+
+// Whether the keyboard is in a box being typed into, which keeps its keys to itself.
+export const writing = (target: EventTarget | null) => target instanceof HTMLElement && ['INPUT', 'TEXTAREA'].includes(target.tagName);
+
 // The row on top of the page, said once for a file and for an empty tab.
 export function Header({ children }: { children: ReactNode }) {
   return <header className="editor-header">{children}</header>;

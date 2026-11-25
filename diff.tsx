@@ -12,7 +12,7 @@ import { modeFor } from './mode';
 import { mapVimAction, viewChrome } from './view';
 import type { GitUri } from './uri';
 import { editOf, watch, type Diff, type Font, type HistoryEntry, type Settings } from './shared';
-import { Navigation, Notice, Overlay, useNotice, type Navigate } from './chrome';
+import { Navigation, Notice, Overlay, pageOf, useNotice, writing, type Navigate } from './chrome';
 
 // ]c and [c walk the changes the way vim's diff mode does, a count walking that many and wrapping round the ends.
 mapVimAction(']c', 'wangcai-editor-next-change', (view, repeat) => { for (let at = 0; at < repeat; at += 1) goToNextChunk(view); });
@@ -50,7 +50,6 @@ function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, b
   const element = useRef<HTMLDivElement>(null);
   const held = useRef<Held>(undefined);
   const keptScroll = useRef(0);
-  const keptFocus = useRef(false);
   const [narrow, setNarrow] = useState(false);
   const [theme, setTheme] = useState<Theme>(context.host.config.theme);
   const unified = reading === 'inline' || (reading === 'auto' && narrow);
@@ -135,14 +134,18 @@ function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, b
       if (cm) Vim.exitInsertMode(cm as CodeMirrorV, true);
     };
     host.addEventListener('focusout', leaveInsert);
-    if (keptFocus.current) side.focus();
+    // The keyboard belongs in the diff when it is shown: handed over on mount and again each time the page is shown, as
+    // the editor does, unless a box is being typed into.
+    const focus = () => { if (!writing(document.activeElement)) side.focus(); };
+    focus();
+    const page = pageOf(host);
+    page?.addEventListener('wangcai:shown', focus);
     held.current = { side, write, count, rewrap, reveal, now, seat };
     diffOpen.set(side, openFile);
     return () => {
       keptScroll.current = scroller.scrollTop;
-      keptFocus.current = side.hasFocus;
       jumps.current = undefined; diffOpen.delete(side);
-      host.removeEventListener('focusout', leaveInsert); offTheme();
+      host.removeEventListener('focusout', leaveInsert); page?.removeEventListener('wangcai:shown', focus); offTheme();
       destroy(); held.current = undefined;
     };
   }, [path, unified]);
