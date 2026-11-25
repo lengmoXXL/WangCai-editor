@@ -84,6 +84,8 @@ Vim.defineEx('write', 'w', (cm) => {
 
 // A file this plugin reads as no language is nobody's to serve.
 const serviceFor = (file: FileClick): OpenOptions | undefined => {
+  // A comparison draws two texts of one file rather than a document a server reads: it has no language service.
+  if (parseGitUri(file.path)) return undefined;
   const language = languageOf(file.path);
   return language ? { machine: file.machine, path: file.path, language } : undefined;
 };

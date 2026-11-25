@@ -137,13 +137,14 @@ class Session {
     // What a closed server is told is dropped rather than failed on: the client may still send after a stop, and a late
     // message is not an error.
     if (this.state === 'closed') return;
-    // A write the node would not take is the server's end as far as this window can tell, so it is reported here rather
-    // than left for the client to notice.
+    // A write the connection refused is the network's, not the server's end: the session stays up, and only the node's
+    // own word (lsp-exit) stops it. The refusal is kept for the dot's detail until a write lands again.
     void this.context.ui.request('lsp-write', { session: this.info.session, data: base64(frame(message)) }).then(
       // A server that took a write is up, whether or not it has answered the handshake: a body that never speaks is still a
       // server this window keeps.
-      () => this.up(),
-      (problem: Error) => this.stop(problem.message),
+      // A late answer lands after a stop too: like send itself, it leaves a closed session's record alone.
+      () => { if (this.state === 'closed') return; if (this.error !== undefined) { this.error = undefined; this.changed(); } this.up(); },
+      (problem: Error) => { if (this.state === 'closed') return; this.error = problem.message; this.changed(); },
     );
   }
 

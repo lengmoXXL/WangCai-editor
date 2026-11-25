@@ -135,6 +135,9 @@ export function activate(context: MainContext) {
     let start = starts.get(session);
     if (!sessions.has(session) && !start) {
       start = (async () => {
+        // A replacement waits until the node confirms the previous process is gone: an unconfirmed death is a close
+        // still being retried, and spawning past it would put two servers on one project.
+        await closing.get(session);
         const info = await connection.subprocess.spawn(located.program, located.args, { cwd: root, env: { PATH: located.envPath } });
         const handle = await connection.subprocess.attach(info.id);
         keep();
@@ -149,8 +152,12 @@ export function activate(context: MainContext) {
             sessions.delete(session);
             context.ui.publish('lsp-exit', { session, code });
           }
-          connection.disconnect();
-          connections.delete(connection);
+          // A close still being confirmed owns this connection's release; releasing here too would spend another
+          // holder's ref on the shared connection.
+          if (!closing.has(session)) {
+            connection.disconnect();
+            connections.delete(connection);
+          }
         });
       })();
       starts.set(session, start);
@@ -161,14 +168,49 @@ export function activate(context: MainContext) {
     return { session, server: name, root };
   };
 
-  // A server the window is done with: its process is closed, and the connection it ran on goes with it.
-  const closeServer = async (session: string) => {
+  // Only the node's own word that the process is gone is its end; a connection refusal or a slow node's timeout is
+  // not: the session stays up, or the close stays pending. The strings are the SDK's bail text today; matching them
+  // as an allowlist keeps a wording change on the safe side (a missed death waits for a manual restart, never a
+  // healthy server killed). Typed SDK errors would own this distinction; until then the editor reads the node's words.
+  const nodeRefusal = (error: unknown) =>
+    /no longer exists|Process has exited/.test(String((error as Error)?.message ?? error));
+
+  // A server whose death the node has not confirmed yet: a replacement spawn waits on the promise, and the close is
+  // tried again on every reconnect until the node acks it, says the process is gone, or the exit event arrives.
+  const closing = new Map<string, Promise<void>>();
+  const confirmDeath = (session: string, connection: MachineConnection, handle: Process): Promise<void> => {
+    const held = closing.get(session);
+    if (held) return held;
+    let settle!: () => void;
+    const done = new Promise<void>((resolve) => { settle = resolve; });
+    closing.set(session, done);
+    const finish = () => {
+      if (closing.get(session) !== done) return;
+      closing.delete(session);
+      offState();
+      offExit();
+      connections.delete(connection);
+      connection.disconnect();
+      settle();
+    };
+    const tryClose = () => {
+      connection.subprocess.close(handle.id).then(finish, (error: unknown) => {
+        // The node's own word that the process is gone confirms its death just as well as a kill it acked.
+        if (nodeRefusal(error)) finish();
+      });
+    };
+    const offState = connection.onState((state) => { if (state.status === 'connected') tryClose(); });
+    const offExit = handle.onExit(() => finish());
+    return done;
+  };
+
+  // A server the window is done with: its death is confirmed on the node before a replacement may start, and the
+  // connection it ran on goes with that confirmation. The ask returns at once; the gate itself is in startServer.
+  const closeServer = (session: string) => {
     const running = sessions.get(session);
     if (!running) return;
     sessions.delete(session);
-    connections.delete(running.connection);
-    await running.connection.subprocess.close(running.handle.id).catch(() => undefined);
-    running.connection.disconnect();
+    void confirmDeath(session, running.connection, running.handle);
   };
 
   // One request runs on its own connection to a machine, closed again at the end unless the body keeps it: a watch
@@ -317,11 +359,23 @@ export function activate(context: MainContext) {
     context.ui.handle('lsp-write', async ({ session, data }: LspData) => {
       const running = sessions.get(session);
       if (!running) throw new Error('语言服务已关闭');
-      await running.handle.write(Buffer.from(data, 'base64'));
+      try {
+        await running.handle.write(Buffer.from(data, 'base64'));
+      } catch (error) {
+        // The node's own refusal is the server's end, which the window hears as an exit so it may start another once
+        // the death is confirmed; a transport refusal is thrown on for the window to keep the session through.
+        if (nodeRefusal(error)) {
+          sessions.delete(session);
+          void confirmDeath(session, running.connection, running.handle);
+          context.ui.publish('lsp-exit', { session, code: undefined });
+        }
+        throw error;
+      }
     }),
     // The window asks for this whenever it stops wanting a server: a restart by hand, a revival retiring the one that went
-    // away, a tab that leaves no file needing it, or a view that left while its server was still starting. The process is
-    // closed here and no exit event goes out: the window that asked has already dropped its own session.
+    // away, a tab that leaves no file needing it, or a view that left while its server was still starting. The death is
+    // confirmed on the node from here and no replacement starts before it; the window that asked has already dropped its
+    // own session, so the ask itself sends no exit event.
     context.ui.handle('lsp-close', ({ session }: LspClose) => closeServer(session)),
   );
 
@@ -352,9 +406,12 @@ export function activate(context: MainContext) {
   return async () => {
     for (const remove of handlers) remove();
     for (const controller of pending) controller.abort();
-    // Closing the servers first, so nothing is left running on the machine once the window is gone; the connections left
-    // after them are the ones a watch keeps.
-    await Promise.all([...sessions.keys()].map(closeServer));
+    // Closing the servers first, so nothing is left running on the machine once the window is gone; a close the node
+    // cannot take now is left to its own reap once the connections below go. The wait is bounded so a machine that
+    // never comes back cannot hold the window's end.
+    for (const session of [...sessions.keys()]) closeServer(session);
+    const grace = new Promise((resolve) => { setTimeout(resolve, 5000).unref(); });
+    await Promise.race([Promise.all([...closing.values()]), grace]);
     for (const connection of connections) connection.disconnect();
   };
 }
