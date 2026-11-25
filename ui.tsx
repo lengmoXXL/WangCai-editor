@@ -17,7 +17,7 @@ import { editorTheme } from './theme';
 import { mapVimAction, viewChrome, viewOf } from './view';
 import { parseGitUri } from './uri';
 import { DiffView } from './diff';
-import { editOf, fileKey, machineKey, watch, type FileClick, type Font, type History, type HistoryEntry, type ImageBytes, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
+import { boundedCache, editOf, fileKey, machineKey, watch, type FileClick, type Font, type History, type HistoryEntry, type ImageBytes, type OpenOptions, type Position, type SearchHit, type Settings } from './shared';
 import { Address, Glass, Header, Navigation, Notice, Overlay, directoryOf, pageOf, useNotice, writing, type Navigate, type PageProps, type Remember } from './chrome';
 import './style.css';
 
@@ -36,8 +36,7 @@ const histories = new Map<string, History>();
 // The most the tab remembers of where it has been: the oldest visits go once there are more than this.
 const historyCeiling = 200;
 // The text a page last held, by file, so a jump back shows it at once while the disk is read again quietly.
-const textCache = new Map<string, { body: string; baseline: string; disk: string }>();
-const textCacheCeiling = 50;
+const textCache = boundedCache<{ body: string; baseline: string; disk: string }>(50);
 // A jump records the place it leaves and the place it lands on, so the moves made in one turn write the history once, on
 // the turn after them; a tab closing and the plugin going away have no turn after them to wait for.
 let pendingSave: ReturnType<typeof setTimeout> | undefined;
@@ -568,10 +567,7 @@ function FileView({ context, file, navigate, back, forward, openSearch, holder, 
     if (loaded.current) {
       write(pageText.current);
       const key = fileKey(file);
-      textCache.delete(key);
       textCache.set(key, { body: pageText.current, baseline: baseline.current, disk: disk.current });
-      const oldest = textCache.keys().next().value;
-      if (textCache.size > textCacheCeiling && oldest !== undefined) textCache.delete(oldest);
     }
   }, []);
   const editing: Editing = {

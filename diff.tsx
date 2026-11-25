@@ -10,7 +10,7 @@ import { editorTheme } from './theme';
 import { modeFor } from './mode';
 import { mapVimAction, viewChrome } from './view';
 import { formatGitUri, type GitUri } from './uri';
-import { editOf, watch, type Diff, type Font, type HistoryEntry, type Settings } from './shared';
+import { boundedCache, editOf, fileKey, watch, type Diff, type Font, type HistoryEntry, type Settings } from './shared';
 import { Navigation, Notice, Overlay, pageOf, useNotice, writing, type Navigate, type Remember } from './chrome';
 
 // ]c and [c walk the changes the way vim's diff mode does, a count walking that many and wrapping round the ends.
@@ -19,6 +19,9 @@ mapVimAction('[c', 'wangcai-editor-previous-change', (view, repeat) => { for (le
 // gf opens the worktree file as a normal editable view, the way vim's goto-file leaves the diff for the file itself.
 const diffOpen = new Map<EditorView, () => void>();
 mapVimAction('gf', 'wangcai-editor-open-file', (view) => diffOpen.get(view)?.());
+
+// The comparison a pane last held, by git url, so a jump back shows it at once while the sides are read again quietly.
+const diffCache = boundedCache<Diff>(50);
 
 const readingOrder = ['auto', 'split', 'inline'] as const;
 type Reading = typeof readingOrder[number];
@@ -213,7 +216,7 @@ export function DiffView({ context, file, uri, holder, navigate, back, forward, 
 
   const jumps = useRef<Jump>(undefined);
   const [layout, setLayout] = useState(readLayout);
-  const [diff, setDiff] = useState<Diff>();
+  const [diff, setDiff] = useState<Diff | undefined>(() => diffCache.get(fileKey(file)));
   const [error, setError] = useState('');
   const [blocks, setBlocks] = useState(0);
   const [force, setForce] = useState(false);
@@ -227,7 +230,7 @@ export function DiffView({ context, file, uri, holder, navigate, back, forward, 
     let alive = true;
     setError('');
     void context.ui.request<Diff>('diff', { machine: file.machine, path: uri.path, base: uri.base, head: uri.head, oldPath: uri.oldPath, force })
-      .then((next) => { if (alive) setDiff(next); })
+      .then((next) => { if (alive) { diffCache.set(fileKey(file), next); setDiff(next); } })
       .catch((problem: Error) => { if (alive) setError(problem.message); });
     const worktree = [uri.base, uri.head].includes(':worktree');
     const stop = worktree ? watch(context, file.machine, `diff:${holder}:${uri.path}`, [uri.path], () => setRefresh(value => value + 1)) : () => {};

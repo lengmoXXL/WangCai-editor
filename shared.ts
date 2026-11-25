@@ -30,6 +30,20 @@ export const machineKey = (machine: FileClick['machine']) => `${machine.id}|${ma
 // The identity of a file on a machine: the key a view, a service, and a cache all name it by.
 export const fileKey = (file: Pick<FileClick, 'machine' | 'path'>) => `${machineKey(file.machine)}|${file.path}`;
 
+// A cache that keeps the most recent entries: setting a key refreshes its place, and the oldest goes once over the ceiling.
+export const boundedCache = <V>(ceiling: number) => {
+  const entries = new Map<string, V>();
+  return {
+    get: (key: string) => entries.get(key),
+    set: (key: string, value: V) => {
+      entries.delete(key);
+      entries.set(key, value);
+      const oldest = entries.keys().next().value;
+      if (entries.size > ceiling && oldest !== undefined) entries.delete(oldest);
+    },
+  };
+};
+
 // The config this plugin accepts: main.ts declares a schema for the same fields.
 export type Font = { family: string; size: number; lineHeight?: number };
 type ServerOverride = { command?: string[]; markers?: string[] };
