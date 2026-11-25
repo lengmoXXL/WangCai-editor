@@ -25,18 +25,19 @@ const diffHost = '.editor-diff .git-editor';
 const sideB = `${diffHost} .cm-merge-b`;
 const lineShown = (page, side, text) => until(() => page.locator(`${side} .cm-line`).filter({ hasText: text }).count().then(n => n > 0));
 
+// The reading habit is chosen through the gear menu; cycle it to the label asked for and close the menu.
+const forceReading = async (page, label) => {
+  await page.getByRole('button', { name: '差异设置' }).click();
+  const reading = page.locator('.code-menu button').filter({ hasText: /^阅读方式/ });
+  for (let at = 0; at < 3 && (await reading.innerText()) !== `阅读方式：${label}`; at += 1) await reading.click();
+  await page.keyboard.press('Escape');
+};
+
 test('a git:// comparison opens a read-only diff with both sides, vim motions and ]c', { timeout: 180000 }, () => withWindow('wangcai-editor-diff', lists, async ({ home, page, errors }) => {
   const file = repoWithChange(home);
   await openEditorWorkspace(page);
   await clickFile(page, { type: 'file', machine, path: `git://${file}@:index~:worktree` });
-  const gear = page.getByRole('button', { name: '差异设置' });
-  const forceReading = async (label) => {
-    await gear.click();
-    const reading = page.locator('.code-menu button').filter({ hasText: /^阅读方式/ });
-    for (let at = 0; at < 3 && (await reading.innerText()) !== `阅读方式：${label}`; at += 1) await reading.click();
-    await page.keyboard.press('Escape');
-  };
-  await forceReading('双栏');
+  await forceReading(page, '双栏');
   // Both sides draw: the index holds the committed text, the worktree the change.
   await lineShown(page, `${diffHost} .cm-merge-a`, "const greet = 'hi';");
   await lineShown(page, sideB, "const greet = 'hello';");
@@ -52,10 +53,10 @@ test('a git:// comparison opens a read-only diff with both sides, vim motions an
   await page.keyboard.press('g'); await page.keyboard.press('g');
   await page.keyboard.type(']c');
   await lineShown(page, sideB, "const greet = 'hello';");
-  assert.match(await gear.getAttribute('title'), /1 处改动/);
+  assert.match(await page.getByRole('button', { name: '差异设置' }).getAttribute('title'), /1 处改动/);
 
   // The reading toggle draws the inline view, a single editor rather than the split pair.
-  await forceReading('单栏');
+  await forceReading(page, '单栏');
   await until(() => page.locator(`${diffHost} > .cm-editor`).count().then(n => n > 0));
   assert.equal(await page.locator(`${diffHost} .cm-mergeView`).count(), 0, 'inline draws no split merge view');
   // gf leaves the comparison for the worktree file as a normal editable view, sharing the same address bar.
@@ -73,3 +74,59 @@ test('a git:// comparison opens a read-only diff with both sides, vim motions an
   await until(async () => (await cursorTop()) !== before);
   assert.deepEqual(errors, []);
 }));
+
+test('a comparison shows its git url, switches buffers with C-w h/l and walks the jumps with C-o/C-i', { timeout: 180000 }, () => withWindow('wangcai-editor-diff-nav', lists, async ({ home, page, errors }) => {
+  const file = repoWithChange(home);
+  await openEditorWorkspace(page);
+  const uri = `git://${file}@:index~:worktree`;
+  await clickFile(page, { type: 'file', machine, path: uri });
+  await forceReading(page, '双栏');
+  await until(() => page.locator(`${diffHost} .cm-mergeView`).count().then(n => n > 0));
+  // The address bar carries the comparison's own git:// resource, not just the worktree path.
+  assert.equal(await page.locator('.editor-path').inputValue(), uri);
+  const focusedSide = () => page.evaluate(() => document.activeElement?.closest('.cm-merge-a') ? 'a' : document.activeElement?.closest('.cm-merge-b') ? 'b' : null);
+  await page.locator(`${sideB} .cm-content`).focus();
+  await until(async () => (await focusedSide()) === 'b');
+  // C-w h/l hand the keyboard between the two buffers.
+  await page.keyboard.press('Control+w'); await page.keyboard.press('h');
+  await until(async () => (await focusedSide()) === 'a');
+  await page.keyboard.press('Control+w'); await page.keyboard.press('l');
+  await until(async () => (await focusedSide()) === 'b');
+  // C-o/C-i walk the jumplist the switches left, across the buffers, without leaving the comparison.
+  await page.keyboard.press('Control+o');
+  await until(async () => (await focusedSide()) === 'a');
+  assert.equal(await page.locator(diffHost).count(), 1);
+  await page.keyboard.press('Control+i');
+  await until(async () => (await focusedSide()) === 'b');
+  assert.deepEqual(errors, []);
+}));
+
+test('leaving a comparison with gf and returning with C-o seats the caret where it was', { timeout: 180000 }, () => withWindow('wangcai-editor-diff-return', lists, async ({ home, page, errors }) => {
+  const file = repoWithChange(home);
+  await openEditorWorkspace(page);
+  await clickFile(page, { type: 'file', machine, path: `git://${file}@:index~:worktree` });
+  await forceReading(page, '双栏');
+  await until(() => page.locator(`${diffHost} .cm-mergeView`).count().then(n => n > 0));
+  await page.locator(`${sideB} .cm-content`).focus();
+  // The line of the primary cursor within a side, read off the line it sits on.
+  const caretLine = (sel) => page.evaluate((s) => {
+    const root = document.querySelector(s);
+    const cursor = root?.querySelector('.cm-cursor-primary');
+    if (!cursor) return 0;
+    const y = cursor.getBoundingClientRect().top;
+    const lines = [...root.querySelectorAll('.cm-content .cm-line')];
+    return lines.findIndex((l) => { const b = l.getBoundingClientRect(); return y >= b.top - 1 && y <= b.bottom + 1; }) + 1;
+  }, sel);
+  await page.keyboard.type('2j');
+  await until(async () => (await caretLine(sideB)) > 1);
+  const left = await caretLine(sideB);
+  // gf leaves for the worktree file; C-o returns and the caret is back on the same line, not the top.
+  await page.keyboard.type('gf');
+  await until(() => page.locator('.editor-diff').count().then(n => n === 0));
+  await page.keyboard.press('Control+o');
+  await until(() => page.locator(diffHost).count().then(n => n > 0));
+  await until(async () => (await caretLine(sideB)) === left);
+  assert.deepEqual(errors, []);
+}));
+
+

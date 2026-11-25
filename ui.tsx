@@ -817,7 +817,7 @@ function Body({ context, navigate, back, forward, openSearch, workspaceId, file,
   const comparison = parseGitUri(file.path);
   return <div className={searching && !comparison ? 'editor-body searching' : 'editor-body'}>
     {comparison
-      ? <DiffView key={key} context={context} file={file} uri={comparison} holder={workspaceId ?? ''} navigate={navigate} back={back} forward={forward} openSearch={openSearch} />
+      ? <DiffView key={key} context={context} file={file} uri={comparison} holder={workspaceId ?? ''} navigate={navigate} back={back} forward={forward} openSearch={openSearch} remember={remember} />
       : <FileView key={key} context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} holder={workspaceId ?? ''} remember={remember} peeking={searching} onRead={setReadFile} />}
     {visited && searching && !comparison && <Search context={context} visited={visited} workspace={workspace} visitedReady={readFile === key && key === fileKey(visited)} peek={peek} navigate={navigate} close={closeSearch} />}
   </div>;
@@ -836,9 +836,9 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
   const view: { searching: boolean; peeked?: FileClick } = { searching: false };
   // The entry the tab shows: what the picker is peeking at, or else the one its history points at.
   const showing = () => view.peeked ?? history.entries[history.index];
-  const push = (file: FileClick) => {
+  const push = (file: HistoryEntry) => {
     const standing = history.entries[history.index];
-    const same = standing && machineKey(standing.machine) === machineKey(file.machine) && standing.type === file.type && standing.path === file.path;
+    const same = standing && machineKey(standing.machine) === machineKey(file.machine) && standing.type === file.type && standing.path === file.path && (standing.side ?? 'b') === (file.side ?? 'b');
     // A file opened without a line is the visit already there, which keeps where it was left; a jump to a line of it is a
     // visit of its own, so going back returns to the line it left.
     if (same && (file.line === undefined || (file.line === standing.line && file.column === standing.column))) return;

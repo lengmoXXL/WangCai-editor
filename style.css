@@ -162,3 +162,11 @@
 .git-editor { flex: 1; min-height: 0; }
 .git-editor .cm-mergeView { height: 100%; overflow: auto; scrollbar-width: thin; scrollbar-color: transparent transparent; }
 .git-editor .cm-mergeView:hover { scrollbar-color: color-mix(in srgb, var(--wc-foreground) 20%, transparent) transparent; }
+/* The comparison reads as a diff: a red wash on the old side, a green wash on the new, and the changed words carried by a
+   soft block behind them rather than the package's bright bottom underline. Selectors outrank the merge base theme. */
+.editor-diff .git-editor .cm-merge-a .cm-changedLine, .editor-diff .git-editor .cm-deletedChunk { background: color-mix(in srgb, var(--wc-red) 12%, transparent); }
+.editor-diff .git-editor .cm-merge-b .cm-changedLine, .editor-diff .git-editor .cm-inlineChangedLine { background: color-mix(in srgb, var(--wc-green) 12%, transparent); }
+.editor-diff .git-editor .cm-editor.cm-merge-a .cm-changedText, .editor-diff .git-editor .cm-deletedChunk .cm-deletedText { background: color-mix(in srgb, var(--wc-red) 32%, transparent); border-radius: 2px; }
+.editor-diff .git-editor .cm-editor.cm-merge-b .cm-changedText, .editor-diff .git-editor .cm-editor.cm-merge-b .cm-deletedText { background: color-mix(in srgb, var(--wc-green) 32%, transparent); border-radius: 2px; }
+.editor-diff .git-editor .cm-editor.cm-merge-a .cm-changedLineGutter, .editor-diff .git-editor .cm-deletedLineGutter { background: var(--wc-red); }
+.editor-diff .git-editor .cm-editor.cm-merge-b .cm-changedLineGutter, .editor-diff .git-editor .cm-insertedLineGutter { background: var(--wc-green); }

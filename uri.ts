@@ -15,3 +15,5 @@ export const parseGitUri = (uri: string): GitUri | undefined => {
   if (!base || !head) return undefined;
   return { path: rest.slice(0, at), base, head, oldPath: query?.startsWith('old=') ? query.slice(4) : undefined };
 };
+
+export const formatGitUri = (uri: GitUri) => `git://${uri.path}@${uri.base}~${uri.head}${uri.oldPath ? `?old=${uri.oldPath}` : ''}`;

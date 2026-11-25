@@ -4,7 +4,7 @@ import type { FileClick, HistoryEntry, Position } from './shared';
 
 export type Remember = (entry: HistoryEntry, at: Partial<Position>) => void;
 // A jump names the place it lands on, and the visit it leaves behind for the way back, if it makes one of its own.
-export type Navigate = (file: FileClick, departure?: HistoryEntry) => void;
+export type Navigate = (file: HistoryEntry, departure?: HistoryEntry) => void;
 // What the tab hands a page it shows.
 export type PageProps = { context: UiContext; file: HistoryEntry; navigate: Navigate; back?: () => void; forward?: () => void; openSearch: () => void };
 
@@ -30,23 +30,27 @@ export const Glass = ({ className }: { className?: string }) => (
 
 // The address box: what is typed is resolved against the directory this visit points into, and the entry it names is
 // opened.
-export function Address({ context, base, navigate, report }: { context: UiContext; base?: FileClick; navigate: (file: FileClick) => void; report: (message: string) => void }) {
-  const [path, setPath] = useState(base?.path ?? '');
+export function Address({ context, base, navigate, report, address }: { context: UiContext; base?: FileClick; navigate: (file: FileClick) => void; report: (message: string) => void; address?: string }) {
+  const shown = address ?? base?.path ?? '';
+  const [path, setPath] = useState(shown);
   const request = useRef(0);
-  useEffect(() => { setPath(base?.path ?? ''); return () => { request.current++; }; }, [base?.path]);
+  useEffect(() => { setPath(shown); return () => { request.current++; }; }, [shown]);
   return <form className="editor-address" onSubmit={(event) => {
     event.preventDefault();
     if (!base || !path.trim()) return;
-    const id = ++request.current;
+    const typed = path.trim();
     report('');
-    void context.ui.request<FileClick>('resolve', { machine: base.machine, path: path.trim(), base: directoryOf(base) })
+    // A comparison is addressed as a git:// resource, opened directly rather than resolved against the disk.
+    if (typed.startsWith('git://')) { navigate({ type: 'file', machine: base.machine, path: typed }); return; }
+    const id = ++request.current;
+    void context.ui.request<FileClick>('resolve', { machine: base.machine, path: typed, base: directoryOf(base) })
       .then((file) => { if (id === request.current) navigate(file); })
       .catch((problem: Error) => { if (id === request.current) report(problem.message); });
   }}>
-    <input className="editor-path" aria-label="路径" title={base?.path ?? ''} value={path} spellCheck={false}
+    <input className="editor-path" aria-label="路径" title={shown} value={path} spellCheck={false}
       onFocus={(event) => event.currentTarget.select()}
       onChange={(event) => { request.current++; setPath(event.target.value); report(''); }}
-      onKeyDown={(event) => { if (event.key === 'Escape') { request.current++; setPath(base?.path ?? ''); report(''); } }} />
+      onKeyDown={(event) => { if (event.key === 'Escape') { request.current++; setPath(shown); report(''); } }} />
   </form>;
 }
 
@@ -95,9 +99,9 @@ export function Overlay({ className, role, label, at, onClose, children }: {
 
 // The header a file and a comparison share: the way back and forward, the read again, the address, and the tail each view
 // fills with its own — a language service for a file, a settings menu for a comparison.
-export function Navigation({ context, file, navigate, back, forward, openSearch, dirty, markdown, preview, togglePreview, refresh, report, lsp, menu, refreshTitle }: PageProps & {
+export function Navigation({ context, file, navigate, back, forward, openSearch, dirty, markdown, preview, togglePreview, refresh, report, lsp, menu, refreshTitle, address }: PageProps & {
   dirty: boolean; markdown?: boolean; preview?: boolean; togglePreview?: () => void; refresh: () => void; report: (text: string) => void;
-  lsp?: ReactNode; menu?: ReactNode; refreshTitle?: string;
+  lsp?: ReactNode; menu?: ReactNode; refreshTitle?: string; address?: string;
 }) {
   return <Header>
     <button className="editor-icon" aria-label="后退" title="后退" disabled={!back} onClick={back}>
@@ -115,7 +119,7 @@ export function Navigation({ context, file, navigate, back, forward, openSearch,
         ? <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12 M2 8h8 M2 12h10" /></svg>
         : <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5.5 4-3.5 4 3.5 4 M10.5 4l3.5 4-3.5 4" /></svg>}
     </button>}
-    <Address context={context} base={file} navigate={navigate} report={report} />
+    <Address context={context} base={file} navigate={navigate} report={report} address={address} />
     {dirty && <span className="editor-dirty" role="status" aria-label="有未写回的改动" title="有未写回的改动">*</span>}
     <div className="editor-tail">
       {lsp}

@@ -9,9 +9,9 @@ import type { UiContext } from '@lengmoxxl/sdk/channel';
 import { editorTheme } from './theme';
 import { modeFor } from './mode';
 import { mapVimAction, viewChrome } from './view';
-import type { GitUri } from './uri';
+import { formatGitUri, type GitUri } from './uri';
 import { editOf, watch, type Diff, type Font, type HistoryEntry, type Settings } from './shared';
-import { Navigation, Notice, Overlay, pageOf, useNotice, writing, type Navigate } from './chrome';
+import { Navigation, Notice, Overlay, pageOf, useNotice, writing, type Navigate, type Remember } from './chrome';
 
 // ]c and [c walk the changes the way vim's diff mode does, a count walking that many and wrapping round the ends.
 mapVimAction(']c', 'wangcai-editor-next-change', (view, repeat) => { for (let at = 0; at < repeat; at += 1) goToNextChunk(view); });
@@ -36,18 +36,21 @@ const writeLayout = (patch: Partial<DiffLayout>) => localStorage.setItem(layoutK
 type Caret = { line: number; column: number };
 type Jump = { next: () => void; previous: () => void };
 type Held = {
-  side: EditorView; write: (oldText: string, newText: string) => void; count: () => number;
+  view: () => EditorView; write: (oldText: string, newText: string) => void; count: () => number;
   rewrap: (on: boolean) => void; reveal: () => void;
   now: (state?: EditorState) => Caret; seat: (line: number, column: number) => number;
+  place: (side: 'a' | 'b' | undefined, line?: number, column?: number, top?: number) => void;
 };
 
 // The merge view itself, mounted only once the two sides are read so its host is always on screen for the effects.
-function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, blocks, openFile }: {
+function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, openFile, entry, remember, navigate }: {
   context: UiContext; diff: Diff; path: string; reading: Reading; wrap: boolean; font: Font;
-  caret: RefObject<Caret | undefined>; jumps: RefObject<Jump | undefined>; blocks: (count: number) => void; openFile: () => void;
+  jumps: RefObject<Jump | undefined>; blocks: (count: number) => void; openFile: () => void; entry: HistoryEntry; remember: Remember; navigate: Navigate;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const held = useRef<Held>(undefined);
+  const entryRef = useRef(entry);
+  useEffect(() => { entryRef.current = entry; });
   const keptScroll = useRef(0);
   const [narrow, setNarrow] = useState(false);
   const [theme, setTheme] = useState<Theme>(context.host.config.theme);
@@ -64,20 +67,24 @@ function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, b
     const host = element.current!;
     const colours = new Compartment();
     const wrapping = new Compartment();
+    let active: EditorView;
+    let windowPending = false;
+    let windowTimer: ReturnType<typeof setTimeout> | undefined;
     const common = [
       colours.of(editorTheme(theme, font)),
       wrapping.of(wrap ? EditorView.lineWrapping : []),
       ...viewChrome, EditorState.readOnly.of(true), modeFor(path),
-      EditorView.updateListener.of((update) => { if (update.selectionSet) caret.current = now(update.state); }),
+      EditorView.updateListener.of((update) => { if (update.selectionSet) rememberHere(update.view); }),
+      EditorView.domEventHandlers({ focus: (_event, view) => { active = view; } }),
     ];
-    let side: EditorView, scroller: HTMLElement, views: EditorView[], count: () => number,
+    let scroller: HTMLElement, views: EditorView[], count: () => number,
       write: (oldText: string, newText: string) => void, destroy: () => void;
     if (unified) {
       const view = new EditorView({
         state: EditorState.create({ doc: diff.newText, extensions: [...common, unifiedMergeView({ original: diff.oldText, mergeControls: false, gutter: false })] }),
         parent: host,
       });
-      side = view; scroller = view.scrollDOM; views = [view];
+      scroller = view.scrollDOM; views = [view];
       count = () => getChunks(view.state)?.chunks.length ?? 0;
       write = (oldText, newText) => {
         const current = view.state.doc.toString();
@@ -92,7 +99,7 @@ function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, b
         b: { doc: diff.newText, extensions: common },
         parent: host, gutter: false,
       });
-      side = view.b; scroller = view.dom; views = [view.a, view.b];
+      scroller = view.dom; views = [view.a, view.b];
       count = () => view.chunks.length;
       write = (oldText, newText) => {
         const before = view.a.state.doc.toString();
@@ -105,46 +112,77 @@ function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, b
     const rewrap = (on: boolean) => { for (const view of views) view.dispatch({ effects: wrapping.reconfigure(on ? EditorView.lineWrapping : []) }); };
     const offTheme = context.global.subscribe<Theme>('theme', (next) => { setTheme(next); for (const view of views) view.dispatch({ effects: colours.reconfigure(editorTheme(next, font)) }); });
     scroller.scrollTop = keptScroll.current;
-    const seat = (line: number, column: number) => {
-      const at = side.state.doc.line(Math.min(side.state.doc.lines, Math.max(1, line)));
+    const seat = (view: EditorView, line: number, column: number) => {
+      const at = view.state.doc.line(Math.min(view.state.doc.lines, Math.max(1, line)));
       return Math.min(at.to, at.from + Math.max(0, column - 1));
     };
-    const now = (state: EditorState = side.state): Caret => {
+    const now = (state: EditorState = active.state): Caret => {
       const head = state.selection.main.head;
       const line = state.doc.lineAt(head);
       return { line: line.number, column: head - line.from + 1 };
     };
     const reveal = () => {
-      const head = side.state.selection.main.head;
-      const coords = side.coordsAtPos(head);
+      const head = active.state.selection.main.head;
+      const coords = active.coordsAtPos(head);
       const box = scroller.getBoundingClientRect();
-      if (!coords || coords.top < box.top || coords.bottom > box.bottom) side.dispatch({ effects: EditorView.scrollIntoView(head, { y: 'center' }) });
+      if (!coords || coords.top < box.top || coords.bottom > box.bottom) active.dispatch({ effects: EditorView.scrollIntoView(head, { y: 'center' }) });
     };
-    if (caret.current) {
-      const at = seat(caret.current.line, caret.current.column);
-      side.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: 'center' }) });
-    }
-    jumps.current = { next: () => { goToNextChunk(side); }, previous: () => { goToPreviousChunk(side); } };
+    // Each buffer is its own history visit: show the entry's side and seat it at the line/scroll that visit remembered.
+    const place = (side: 'a' | 'b' | undefined, line?: number, column?: number, top?: number) => {
+      const view = side === 'a' ? views[0] : views[views.length - 1];
+      active = view;
+      if (line !== undefined) {
+        const pos = seat(view, line, column ?? 1);
+        view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+      }
+      if (top !== undefined) scroller.scrollTop = top;
+      view.focus();
+    };
+    const rememberHere = (view: EditorView) => {
+      if (view !== active) return;
+      const c = now(view.state);
+      remember(entryRef.current, { line: c.line, column: c.column });
+    };
+    const onScroll = () => remember(entryRef.current, { top: scroller.scrollTop });
+    place(entry.side, entry.line, entry.column, entry.top);
+    jumps.current = { next: () => goToNextChunk(active), previous: () => goToPreviousChunk(active) };
     blocks(count());
+    // C-w h/l visit the other buffer as its own history entry, so C-o/C-i (the tab history) walk back between them.
+    const switchSide = (side: 'a' | 'b') => navigate({ type: 'file', machine: entryRef.current.machine, path: entryRef.current.path, side });
     // A press that leaves the diff ends an insert mode still open, as the editor ends one on the way out.
     const leaveInsert = (event: FocusEvent) => {
       if (event.relatedTarget instanceof Node && host.contains(event.relatedTarget)) return;
-      const cm = getCM(side);
+      const cm = getCM(active);
       if (cm) Vim.exitInsertMode(cm as CodeMirrorV, true);
     };
     host.addEventListener('focusout', leaveInsert);
+    scroller.addEventListener('scroll', onScroll, { passive: true });
     // The keyboard belongs in the diff when it is shown: handed over on mount and again each time the page is shown, as
     // the editor does, unless a box is being typed into.
-    const focus = () => { if (!writing(document.activeElement)) side.focus(); };
+    const focus = () => { if (!writing(document.activeElement)) active.focus(); };
     focus();
     const page = pageOf(host);
     page?.addEventListener('wangcai:shown', focus);
-    held.current = { side, write, count, rewrap, reveal, now, seat };
-    diffOpen.set(side, openFile);
+    // C-w h/l is answered ahead of the vim layer: a window capture listener scoped to this host sees the press first and
+    // takes only that combination — C-o/C-i and every other key fall through, the jumps to the tab history.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.altKey || event.metaKey) return;
+      if (!(event.target instanceof Node) || !host.contains(event.target)) return;
+      const key = event.key.toLowerCase();
+      const take = () => { event.preventDefault(); event.stopPropagation(); };
+      if (event.ctrlKey && !event.shiftKey && key === 'w') { windowPending = true; clearTimeout(windowTimer); windowTimer = setTimeout(() => { windowPending = false; }, 1000); take(); return; }
+      if (windowPending && (key === 'h' || key === 'l')) { windowPending = false; switchSide(key === 'h' ? 'a' : 'b'); take(); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    held.current = { view: () => active, write, count, rewrap, reveal, now, seat: (line, column) => seat(active, line, column), place };
+    for (const view of views) diffOpen.set(view, openFile);
     return () => {
       keptScroll.current = scroller.scrollTop;
-      jumps.current = undefined; diffOpen.delete(side);
-      host.removeEventListener('focusout', leaveInsert); page?.removeEventListener('wangcai:shown', focus); offTheme();
+      jumps.current = undefined;
+      for (const view of views) diffOpen.delete(view);
+      host.removeEventListener('focusout', leaveInsert); scroller.removeEventListener('scroll', onScroll);
+      window.removeEventListener('keydown', onKey, true); clearTimeout(windowTimer);
+      page?.removeEventListener('wangcai:shown', focus); offTheme();
       destroy(); held.current = undefined;
     };
   }, [path, unified]);
@@ -156,19 +194,23 @@ function DiffSurface({ context, diff, path, reading, wrap, font, caret, jumps, b
     const at = pane.now();
     pane.write(diff.oldText, diff.newText);
     const pos = pane.seat(at.line, at.column);
-    if (pane.side.state.selection.main.head !== pos) pane.side.dispatch({ selection: { anchor: pos } });
+    const view = pane.view();
+    if (view.state.selection.main.head !== pos) view.dispatch({ selection: { anchor: pos } });
     blocks(pane.count());
     pane.reveal();
   }, [diff]);
 
   useEffect(() => { held.current?.rewrap(wrap); }, [wrap]);
 
+  // A history visit (C-o/C-i, or a C-w switch) names a side and the place it was left; show and seat it.
+  useEffect(() => { held.current?.place(entry.side, entry.line, entry.column, entry.top); }, [entry.side, entry.line, entry.column, entry.top]);
+
   return <div className="git-editor" ref={element} />;
 }
 
-export function DiffView({ context, file, uri, holder, navigate, back, forward, openSearch }: { context: UiContext; file: HistoryEntry; uri: GitUri; holder: string; navigate: Navigate; back?: () => void; forward?: () => void; openSearch: () => void }) {
+export function DiffView({ context, file, uri, holder, navigate, back, forward, openSearch, remember }: { context: UiContext; file: HistoryEntry; uri: GitUri; holder: string; navigate: Navigate; back?: () => void; forward?: () => void; openSearch: () => void; remember: Remember }) {
   const font: Font = (context.host.config as Settings).font;
-  const caret = useRef<Caret>(file.line ? { line: file.line, column: file.column ?? 1 } : undefined);
+
   const jumps = useRef<Jump>(undefined);
   const [layout, setLayout] = useState(readLayout);
   const [diff, setDiff] = useState<Diff>();
@@ -193,11 +235,11 @@ export function DiffView({ context, file, uri, holder, navigate, back, forward, 
   }, [context, file.machine, uri.path, uri.base, uri.head, uri.oldPath, force, refresh, holder]);
 
   const openFile = () => {
-    void context.global.publish('onclick', { type: 'file', machine: file.machine, path: uri.path, line: caret.current?.line, column: caret.current?.column } satisfies FileClick);
+    void context.global.publish('onclick', { type: 'file', machine: file.machine, path: uri.path, line: file.line, column: file.column } satisfies FileClick);
   };
 
   return <section className="editor editor-diff" aria-label="Git 差异">
-    <Navigation context={context} file={{ ...file, path: uri.path }} navigate={navigate} back={back} forward={forward} openSearch={openSearch}
+    <Navigation context={context} file={{ ...file, path: uri.path }} address={formatGitUri(uri)} navigate={navigate} back={back} forward={forward} openSearch={openSearch}
       dirty={false} refresh={() => setRefresh(value => value + 1)} report={report} refreshTitle="重读差异"
       menu={<>
         <button className="editor-icon" aria-label="差异设置" title={`差异设置${blocks ? `（${blocks} 处改动）` : ''}`} onClick={() => setMenu(true)}>
@@ -217,7 +259,7 @@ export function DiffView({ context, file, uri, holder, navigate, back, forward, 
         : diff?.notice ? <div className="file-message">{diff.notice}</div>
         : diff?.tooLarge ? <div className="file-message">文件过大（{Math.ceil(diff.tooLarge / 1024 / 1024)} MB）<button onClick={() => setForce(true)}>仍然加载</button></div>
         : !diff ? <div className="file-message">正在读取…</div>
-        : <DiffSurface context={context} diff={diff} path={uri.path} reading={layout.reading} wrap={layout.wrap} font={font} caret={caret} jumps={jumps} blocks={setBlocks} openFile={openFile} />}
+        : <DiffSurface context={context} diff={diff} path={uri.path} reading={layout.reading} wrap={layout.wrap} font={font} jumps={jumps} blocks={setBlocks} openFile={openFile} entry={file} remember={remember} navigate={navigate} />}
     </div>
   </section>;
 }

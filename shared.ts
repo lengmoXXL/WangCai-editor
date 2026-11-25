@@ -3,7 +3,8 @@ export type { FileClick } from '@lengmoxxl/sdk';
 import type { UiContext } from '@lengmoxxl/sdk/channel';
 // Where a visited file was left: its cursor and the offset it was scrolled to.
 export type Position = { line: number; column: number; top: number };
-export type HistoryEntry = FileClick & Partial<Position>;
+// A comparison's two buffers are visited independently under one git:// address; `side` tells which one an entry holds.
+export type HistoryEntry = FileClick & Partial<Position> & { side?: 'a' | 'b' };
 export type History = { entries: HistoryEntry[]; index: number };
 // Where the cursor is in the file a tab shows: the click that opens the same place.
 export type Cursor = FileClick & { line: number; column: number };
