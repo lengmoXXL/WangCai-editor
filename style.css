@@ -67,13 +67,17 @@
 .cm-md-task:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
 /* High-contrast mode strips backgrounds and images, so the box hands back to the platform's own drawing there. */
 @media (forced-colors: active) { .cm-md-task, .cm-md-task:checked { appearance: auto; background: none; } }
-.cm-md-table { border-collapse: collapse; margin: 6px 0; color: var(--wc-foreground); }
+.cm-md-table { border-collapse: collapse; margin: 0 0 6px; line-height: normal; color: var(--wc-foreground); }
 .cm-md-table th, .cm-md-table td { padding: 4px 8px; border: 1px solid var(--wc-border); }
 .cm-md-table th { background: var(--wc-overlay); font-weight: 700; }
 /* A drag across the grid picks cells; CodeMirror hides the browser's own selection, so the pick paints itself. */
 .cm-md-table-picked { background: var(--wc-selection); }
 .cm-md-table-hidden { height: 0; min-height: 0; padding: 0; overflow: hidden; font-size: 0; line-height: 0; }
 .cm-md-table-src { display: none; }
+/* The grid's line keeps no text strut and the widget buffer beside it no height, so the grid starts at the line top. */
+.cm-md-table-line { line-height: 0; }
+.cm-md-table-line .cm-widgetBuffer { height: 0; }
+.cm-md-table-gutter { visibility: hidden; }
 .cm-md-frontmatter-hidden { height: 0; min-height: 0; padding: 0; overflow: hidden; font-size: 0; line-height: 0; }
 .cm-md-frontmatter-src { display: none; }
 .cm-md-frontmatter { display: block; margin: 4px 0; padding: 6px 10px; border: 1px solid var(--wc-border); border-left: 2px solid var(--wc-accent); border-radius: 4px; background: var(--wc-overlay); }

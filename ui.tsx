@@ -12,7 +12,7 @@ import { bindKeys } from '@lengmoxxl/sdk/keys';
 import type { TabRecord, UiContext } from '@lengmoxxl/sdk/channel';
 import { LanguageServices, type FileSymbol, type LocationFeature, type ServiceStatus, type Target } from './lsp';
 import { languageOf, modeFor } from './mode';
-import { markdownPreview, markdownPreviewKeys, markdownPreviewParse, previewImageSource, imageMeasure, type PreviewImageSource } from './preview';
+import { markdownPreview, markdownPreviewKeys, markdownPreviewParse, tableGutter, previewImageSource, imageMeasure, type PreviewImageSource } from './preview';
 import { editorTheme } from './theme';
 import { mapVimAction, viewChrome, viewOf } from './view';
 import { parseGitUri } from './uri';
@@ -190,7 +190,7 @@ const imageSourceFor = (context: UiContext, file: FileClick): PreviewImageSource
     return pending;
   };
 };
-const previewExtensions = (loadImage: PreviewImageSource) => [markdownPreview, markdownPreviewKeys, markdownPreviewParse, EditorView.lineWrapping, previewImageSource.of(loadImage), imageMeasure.of(EditorView.theme({ '.cm-md-image': {} }))];
+const previewExtensions = (loadImage: PreviewImageSource) => [markdownPreview, markdownPreviewKeys, markdownPreviewParse, tableGutter, EditorView.lineWrapping, previewImageSource.of(loadImage), imageMeasure.of(EditorView.theme({ '.cm-md-image': {} }))];
 
 function EditorPage({ file, text, remember, peeking, navigate, editing, preview, loadImage }: { file: HistoryEntry; text: { body: string }; remember: Remember; peeking: boolean; navigate: Navigate; editing: Editing; preview: boolean; loadImage: PreviewImageSource }) {
   const element = useRef<HTMLDivElement>(null);

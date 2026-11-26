@@ -1,7 +1,7 @@
 import { forceParsing, syntaxTree } from '@codemirror/language';
-import { Compartment, Facet, Prec, type EditorState, type Range, type Text } from '@codemirror/state';
+import { Compartment, Facet, Prec, RangeSet, StateField, type EditorState, type Range, type Text } from '@codemirror/state';
 import type { SyntaxNode } from '@lezer/common';
-import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { getCM } from '@replit/codemirror-vim';
 import { common, createLowlight } from 'lowlight';
 
@@ -325,23 +325,28 @@ class CodeLangWidget extends WidgetType {
 
 const headingSize = /^ATXHeading([1-6])$/;
 
+// The lines a caret or selection rests on, which keep their raw syntax visible instead of rendering.
+const activeLines = (state: EditorState): Set<number> => {
+  const doc = state.doc;
+  const active = new Set<number>();
+  for (const range of state.selection.ranges) {
+    for (let l = doc.lineAt(range.from).number; l <= doc.lineAt(range.to).number; l += 1) active.add(l);
+  }
+  return active;
+};
+// Whether a caret or selection rests anywhere in a range, which keeps that range's raw syntax visible.
+const rangeRevealed = (active: Set<number>, doc: Text, from: number, to: number): boolean => {
+  for (let l = doc.lineAt(from).number; l <= doc.lineAt(to).number; l += 1) if (active.has(l)) return true;
+  return false;
+};
+
 // What the view draws: the markdown rendered inline, with the raw syntax of every line the caret or a selection rests on
 // left visible, the way a live preview lets the line being edited be edited as text.
 function render(state: EditorState, from: number, to: number): DecorationSet {
   const doc = state.doc;
   const loadImage = state.facet(previewImageSource)[0];
-  const active = new Set<number>();
-  for (const range of state.selection.ranges) {
-    const from = doc.lineAt(range.from).number;
-    const to = doc.lineAt(range.to).number;
-    for (let line = from; line <= to; line += 1) active.add(line);
-  }
-  const revealed = (from: number, to: number) => {
-    const a = doc.lineAt(from).number;
-    const b = doc.lineAt(to).number;
-    for (let line = a; line <= b; line += 1) if (active.has(line)) return true;
-    return false;
-  };
+  const active = activeLines(state);
+  const revealed = (from: number, to: number) => rangeRevealed(active, doc, from, to);
 
   const ranges: Range<Decoration>[] = [];
   const mark = (from: number, to: number, cls: string) => {
@@ -460,7 +465,10 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
         const lastLine = doc.lineAt(to).number;
         for (let l = firstLine; l <= lastLine; l++) {
           const ln = doc.line(l);
-          if (l === lastLine) ranges.push({ from: ln.from, to: ln.to, value: Decoration.mark({ class: 'cm-md-table-src' }) });
+          if (l === lastLine) {
+            ranges.push({ from: ln.from, to: ln.to, value: Decoration.mark({ class: 'cm-md-table-src' }) });
+            ranges.push({ from: ln.from, to: ln.from, value: Decoration.line({ class: 'cm-md-table-line' }) });
+          }
           else ranges.push({ from: ln.from, to: ln.from, value: Decoration.line({ class: 'cm-md-table-hidden' }) });
         }
         const rows: { header: boolean; cells: Seg[][] }[] = [];
@@ -517,6 +525,32 @@ export const markdownPreview = ViewPlugin.fromClass(class {
     return render(view.state, from, to);
   }
 }, { decorations: plugin => plugin.decorations });
+
+// The grid rides the table's last source line, whose number would otherwise float above the grid as a stray row;
+// a gutter marker hides that number, leaving only the numbers either side of the grid.
+class TableGutterMarker extends GutterMarker {
+  elementClass = 'cm-md-table-gutter';
+}
+const tableGutterMarker = new TableGutterMarker();
+const tableGutterMarks = (state: EditorState): RangeSet<GutterMarker> => {
+  const doc = state.doc;
+  const active = activeLines(state);
+  const marks: Range<GutterMarker>[] = [];
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name !== 'Table') return;
+      if (rangeRevealed(active, doc, node.from, node.to)) return;
+      const at = doc.lineAt(node.to).from;
+      marks.push({ from: at, to: at, value: tableGutterMarker });
+    },
+  });
+  return RangeSet.of(marks, true);
+};
+export const tableGutter = StateField.define<RangeSet<GutterMarker>>({
+  create: tableGutterMarks,
+  update: (value, tr) => (tr.docChanged || tr.selection || syntaxTree(tr.state) !== syntaxTree(tr.startState) ? tableGutterMarks(tr.state) : value),
+  provide: (field) => gutterLineClass.from(field),
+});
 
 // The idle parser only runs while it has focus, budget and no pending input, so a page can sit unrendered until a
 // click wakes it. Drive the parse here instead: whenever the viewport is not covered, parse forward a bounded slice
