@@ -117,6 +117,7 @@ function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, 
     // the goal column and the count, so only the leap is removed.
     for (const view of views) {
       const cm = getCM(view);
+      if (!cm) continue;
       const findPosV = cm.findPosV.bind(cm);
       cm.findPosV = (start, amount, unit, goalColumn) => {
         const pos = findPosV(start, amount, unit, goalColumn);
