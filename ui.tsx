@@ -826,7 +826,7 @@ function Body({ context, navigate, back, forward, openSearch, workspaceId, file,
   const comparison = parseGitUri(file.path);
   return <div className={searching && !comparison ? 'editor-body searching' : 'editor-body'}>
     {comparison
-      ? <DiffView key={key} context={context} file={file} uri={comparison} holder={workspaceId ?? ''} navigate={navigate} back={back} forward={forward} openSearch={openSearch} remember={remember} />
+      ? <DiffView key={key} context={context} file={file} uri={comparison} holder={workspaceId ?? ''} navigate={navigate} back={back} forward={forward} remember={remember} />
       : <FileView key={key} context={context} file={file} navigate={navigate} back={back} forward={forward} openSearch={openSearch} holder={workspaceId ?? ''} remember={remember} peeking={searching} onRead={setReadFile} />}
     {visited && searching && !comparison && <Search context={context} visited={visited} workspace={workspace} visitedReady={readFile === key && key === fileKey(visited)} peek={peek} navigate={navigate} close={closeSearch} />}
   </div>;
@@ -882,7 +882,7 @@ function openTab(context: UiContext, workspaceId?: string, file?: FileClick) {
       push(file);
       show();
     };
-    const openSearch = () => show({ searching: true });
+    const openSearch = () => { const cur = showing(); if (cur && parseGitUri(cur.path)) return; show({ searching: true }); };
     const closeSearch = () => show();
     // The picker stays open where the name is being typed.
     const peek = (file: FileClick) => show({ searching: true, peeked: file });

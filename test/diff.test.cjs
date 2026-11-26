@@ -98,6 +98,10 @@ test('a comparison shows its git url, switches buffers with C-w h/l and walks th
   assert.equal(await page.locator(diffHost).count(), 1);
   await page.keyboard.press('Control+i');
   await until(async () => (await focusedSide()) === 'b');
+  // The comparison offers no search: neither a button nor C-f opens a picker over it.
+  assert.equal(await page.getByRole('button', { name: '搜索' }).count(), 0);
+  await page.keyboard.press('Control+f');
+  assert.equal(await page.locator('.search-panel').count(), 0);
   assert.deepEqual(errors, []);
 }));
 

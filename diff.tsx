@@ -211,7 +211,7 @@ function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, 
   return <div className="git-editor" ref={element} />;
 }
 
-export function DiffView({ context, file, uri, holder, navigate, back, forward, openSearch, remember }: { context: UiContext; file: HistoryEntry; uri: GitUri; holder: string; navigate: Navigate; back?: () => void; forward?: () => void; openSearch: () => void; remember: Remember }) {
+export function DiffView({ context, file, uri, holder, navigate, back, forward, remember }: { context: UiContext; file: HistoryEntry; uri: GitUri; holder: string; navigate: Navigate; back?: () => void; forward?: () => void; remember: Remember }) {
   const font: Font = (context.host.config as Settings).font;
 
   const jumps = useRef<Jump>(undefined);
@@ -242,7 +242,7 @@ export function DiffView({ context, file, uri, holder, navigate, back, forward, 
   };
 
   return <section className="editor editor-diff" aria-label="Git 差异">
-    <Navigation context={context} file={{ ...file, path: uri.path }} address={formatGitUri(uri)} navigate={navigate} back={back} forward={forward} openSearch={openSearch}
+    <Navigation context={context} file={{ ...file, path: uri.path }} address={formatGitUri(uri)} navigate={navigate} back={back} forward={forward}
       dirty={false} refresh={() => setRefresh(value => value + 1)} report={report} refreshTitle="重读差异"
       menu={<>
         <button className="editor-icon" aria-label="差异设置" title={`差异设置${blocks ? `（${blocks} 处改动）` : ''}`} onClick={() => setMenu(true)}>

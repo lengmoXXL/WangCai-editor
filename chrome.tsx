@@ -6,7 +6,7 @@ export type Remember = (entry: HistoryEntry, at: Partial<Position>) => void;
 // A jump names the place it lands on, and the visit it leaves behind for the way back, if it makes one of its own.
 export type Navigate = (file: HistoryEntry, departure?: HistoryEntry) => void;
 // What the tab hands a page it shows.
-export type PageProps = { context: UiContext; file: HistoryEntry; navigate: Navigate; back?: () => void; forward?: () => void; openSearch: () => void };
+export type PageProps = { context: UiContext; file: HistoryEntry; navigate: Navigate; back?: () => void; forward?: () => void; openSearch?: () => void };
 
 // The directory a visit points into: a directory is its own, and a file's is the one it sits in.
 export const directoryOf = (file: FileClick) => (file.type === 'directory' ? file.path : file.path.slice(0, file.path.lastIndexOf('/')) || '/');
@@ -130,9 +130,9 @@ export function Navigation({ context, file, navigate, back, forward, openSearch,
       <button className="editor-icon" aria-label="预览" title="在 preview 里打开当前文件" onClick={() => void context.global.publish('preview:open', file)}>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 8s2.6-4.5 7-4.5S15 8 15 8s-2.6 4.5-7 4.5S1 8 1 8Z" /><circle cx="8" cy="8" r="1.8" /></svg>
       </button>
-      <button className="editor-icon" aria-label="搜索" title="搜索" onClick={openSearch}>
+      {openSearch && <button className="editor-icon" aria-label="搜索" title="搜索" onClick={openSearch}>
         <Glass />
-      </button>
+      </button>}
       {menu}
     </div>
   </Header>;
