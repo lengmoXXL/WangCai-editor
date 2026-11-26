@@ -407,11 +407,18 @@ function EditorPage({ file, text, remember, peeking, navigate, editing, preview,
     }
     const paintKept = () => paint(keptShare() * room());
     paintKept();
-    // The gutter only exists once the view mounts, so measure again on the next frame.
-    const raf = requestAnimationFrame(paintKept);
     const observer = new ResizeObserver(paintKept);
     observer.observe(row.current!);
-    return () => { cancelAnimationFrame(raf); observer.disconnect(); };
+    // The gutter mounts with the view, which can be after this effect; watch for it and re-paint once it has
+    // a width, or the content stays a gutter wider than the divider until the divider is moved.
+    const watchGutter = () => {
+      const gutter = element.current!.querySelector('.cm-gutters');
+      if (gutter) { observer.observe(gutter); mo.disconnect(); }
+    };
+    const mo = new MutationObserver(watchGutter);
+    mo.observe(element.current!, { childList: true, subtree: true });
+    watchGutter();
+    return () => { mo.disconnect(); observer.disconnect(); };
   }, [preview]);
   return <>
     <div className={`editor-page-row${preview ? ' previewing' : ''}`} ref={row}>
