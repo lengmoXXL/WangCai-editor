@@ -7,7 +7,7 @@ const { lists, machine, openEditorWorkspace, clickFile } = require('./editor-ui.
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 // A repository with one file committed and then changed in the worktree, so an unstaged comparison has two sides.
-const repoWithChange = (home) => {
+const repoWithChange = (home, before = "const greet = 'hi';\nexport const answer = 41;\n", after = "const greet = 'hello';\nexport const answer = 42;\n") => {
   const repo = join(home, 'repo');
   mkdirSync(repo, { recursive: true });
   const env = { ...process.env, HOME: home };
@@ -15,9 +15,9 @@ const repoWithChange = (home) => {
   git('init', '-q', '-b', 'main');
   git('config', 'user.name', 'Demo'); git('config', 'user.email', 'demo@local');
   const file = join(repo, 'app.ts');
-  writeFileSync(file, "const greet = 'hi';\nexport const answer = 41;\n");
+  writeFileSync(file, before);
   git('add', '.'); git('commit', '-qm', 'initial');
-  writeFileSync(file, "const greet = 'hello';\nexport const answer = 42;\n");
+  writeFileSync(file, after);
   return file;
 };
 
@@ -130,6 +130,36 @@ test('leaving a comparison with gf and returning with C-o seats the caret where 
   await page.keyboard.press('Control+o');
   await until(() => page.locator(diffHost).count().then(n => n > 0));
   await until(async () => (await caretLine(sideB)) === left);
+  assert.deepEqual(errors, []);
+}));
+
+test('a vertical move with the caret scrolled off screen steps one line rather than leaping into view', { timeout: 180000 }, () => withWindow('wangcai-editor-diff-offscreen', lists, async ({ home, page, errors }) => {
+  const lines = Array.from({ length: 300 }, (_, at) => `const line${at} = ${at};`);
+  lines[150] = 'const CHANGED_OLD = 1;';
+  const before = lines.join('\n') + '\n';
+  lines[150] = 'const CHANGED_NEW = 2;';
+  const file = repoWithChange(home, before, lines.join('\n') + '\n');
+
+  await openEditorWorkspace(page);
+  await clickFile(page, { type: 'file', machine, path: `git://${file}@:index~:worktree` });
+  await forceReading(page, '双栏');
+  await until(() => page.locator(`${diffHost} .cm-mergeView`).count().then(n => n > 0));
+  await page.locator(`${sideB} .cm-content`).focus();
+  await until(() => page.evaluate((sel) => document.activeElement?.closest(sel) !== null, sideB));
+
+  const activeText = () => page.evaluate((sel) => document.querySelector(`${sel} .cm-activeLine`)?.textContent.trim() ?? '', sideB);
+  await page.keyboard.type('gg');
+  await page.waitForTimeout(200);
+  await page.evaluate(() => { document.querySelector('.editor-diff .cm-mergeView').scrollTop = 2000; });
+  await page.waitForTimeout(300);
+  const relY = await page.evaluate((sel) => {
+    const sc = document.querySelector('.editor-diff .cm-mergeView');
+    const c = document.querySelector(`${sel} .cm-cursor-primary`);
+    return c ? c.getBoundingClientRect().top - sc.getBoundingClientRect().top : null;
+  }, sideB);
+  assert.ok(relY !== null && relY < 0, 'the caret must be scrolled out of view before the step');
+  await page.keyboard.type('j');
+  await until(async () => (await activeText()) === 'const line1 = 1;');
   assert.deepEqual(errors, []);
 }));
 

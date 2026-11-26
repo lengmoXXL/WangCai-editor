@@ -112,6 +112,26 @@ function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, 
       };
       destroy = () => view.destroy();
     }
+    // The merge spacers make CodeMirror's coordinate-based vertical motion leap into the rendered viewport when the
+    // caret is scrolled off screen. Land such a move on its document line instead; vim's own moveByLines still applies
+    // the goal column and the count, so only the leap is removed.
+    for (const view of views) {
+      const cm = getCM(view);
+      const findPosV = cm.findPosV.bind(cm);
+      cm.findPosV = (start, amount, unit, goalColumn) => {
+        const pos = findPosV(start, amount, unit, goalColumn);
+        if (unit !== 'line') return pos;
+        const line = Math.max(0, Math.min(view.state.doc.lines - 1, start.line + amount));
+        if (pos.line === line) return pos;
+        const at = view.state.doc.line(start.line + 1);
+        const head = at.from + Math.min(start.ch, at.length);
+        const { from, to } = view.viewport;
+        if (head >= from && head <= to) return pos;
+        pos.line = line;
+        pos.ch = Math.min(start.ch, view.state.doc.line(line + 1).length);
+        return pos;
+      };
+    }
     const rewrap = (on: boolean) => { for (const view of views) view.dispatch({ effects: wrapping.reconfigure(on ? EditorView.lineWrapping : []) }); };
     const offTheme = context.global.subscribe<Theme>('theme', (next) => { setTheme(next); for (const view of views) view.dispatch({ effects: colours.reconfigure(editorTheme(next, font)) }); });
     scroller.scrollTop = keptScroll.current;
@@ -128,7 +148,7 @@ function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, 
       const head = active.state.selection.main.head;
       const coords = active.coordsAtPos(head);
       const box = scroller.getBoundingClientRect();
-      if (!coords || coords.top < box.top || coords.bottom > box.bottom) active.dispatch({ effects: EditorView.scrollIntoView(head, { y: 'center' }) });
+      if (!coords || coords.top < box.top || coords.bottom > box.bottom) active.dispatch({ effects: EditorView.scrollIntoView(head, { y: 'nearest' }) });
     };
     // Each buffer is its own history visit: show the entry's side and seat it at the line/scroll that visit remembered.
     const place = (side: 'a' | 'b' | undefined, line?: number, column?: number, top?: number) => {
@@ -136,10 +156,21 @@ function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, 
       active = view;
       if (line !== undefined) {
         const pos = seat(view, line, column ?? 1);
-        view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+        // A visit that remembers a scroll offset goes back to that offset, not centred on the line; the
+        // centre would land after the offset and win. Only a visit with no offset is centred on its line.
+        view.dispatch({ selection: { anchor: pos }, effects: top === undefined ? EditorView.scrollIntoView(pos, { y: 'center' }) : [] });
       }
-      if (top !== undefined) scroller.scrollTop = top;
       view.focus();
+      if (top !== undefined) {
+        // A view that has not measured the screenful yet cannot scroll that far, so it is asked again on a
+        // later frame, the way the editor puts a visit back.
+        let frames = 0;
+        const put = () => {
+          scroller.scrollTop = top;
+          if (Math.abs(scroller.scrollTop - top) > 1 && frames < 60) { frames += 1; requestAnimationFrame(put); }
+        };
+        put();
+      }
     };
     const rememberHere = (view: EditorView) => {
       if (view !== active) return;
