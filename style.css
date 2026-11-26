@@ -60,7 +60,7 @@
 .cm-md-image-name { color: var(--wc-muted); }
 .cm-md-image-missing { opacity: 0.6; }
 .cm-md-image-missing .cm-md-image-name { text-decoration: line-through; }
-.cm-md-task { width: 1em; height: 1em; margin: 0 2px 0 0; vertical-align: -0.15em; cursor: pointer; appearance: none; border: 1px solid var(--wc-border); border-radius: 3px; background: transparent; }
+.cm-md-task { width: 1em; height: 1em; margin: 0 2px 0 0; vertical-align: -0.15em; cursor: pointer; appearance: none; border: 1px solid var(--wc-border); border-radius: 1px; background: transparent; }
 /* The tick is an inline SVG, which cannot read the theme tokens; its stroke keeps the default background hue. */
 .cm-md-task:checked { background: var(--wc-accent) url("data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2010%2010%22%3E%3Cpath%20d%3D%22M2%205.2%204.2%207.4%208%203%22%20fill%3D%22none%22%20stroke%3D%22%23191a1b%22%20stroke-width%3D%221.6%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E") center / 72% no-repeat; border-color: var(--wc-accent); }
 .cm-md-task:hover { border-color: var(--wc-accent); }
