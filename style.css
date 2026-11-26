@@ -67,9 +67,11 @@
 .cm-md-task:focus-visible { outline: 2px solid var(--wc-accent); outline-offset: 1px; }
 /* High-contrast mode strips backgrounds and images, so the box hands back to the platform's own drawing there. */
 @media (forced-colors: active) { .cm-md-task, .cm-md-task:checked { appearance: auto; background: none; } }
-.cm-md-table { border-collapse: collapse; margin: 0 0 6px; line-height: normal; color: var(--wc-foreground); }
-.cm-md-table th, .cm-md-table td { padding: 4px 8px; border: 1px solid var(--wc-border); }
+.cm-md-table { border-collapse: separate; border-spacing: 0; border: 1px solid var(--wc-border); border-radius: 2px; overflow: hidden; margin: 0 0 6px; line-height: normal; color: var(--wc-foreground); }
+.cm-md-table th, .cm-md-table td { padding: 4px 8px; border-right: 1px solid var(--wc-border); border-bottom: 1px solid var(--wc-border); }
 .cm-md-table th { background: var(--wc-overlay); font-weight: 700; }
+.cm-md-table th:last-child, .cm-md-table td:last-child { border-right: 0; }
+.cm-md-table tbody tr:last-child td { border-bottom: 0; }
 /* A drag across the grid picks cells; CodeMirror hides the browser's own selection, so the pick paints itself. */
 .cm-md-table-picked { background: var(--wc-selection); }
 .cm-md-table-hidden { height: 0; min-height: 0; padding: 0; overflow: hidden; font-size: 0; line-height: 0; }
