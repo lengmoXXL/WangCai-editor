@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
-import type { MachineConnection, Process } from '@lengmoxxl/sdk';
+import { workspaceAlias, type MachineConnection, type Process } from '@lengmoxxl/sdk';
 import type { MainContext } from '@lengmoxxl/sdk/channel';
 import { machineKey, type Cursor, type DiffRequest, type FileClick, type History, type ImageBytes, type LspClose, type LspData, type LspSession, type OpenOptions, type SearchHit, type Settings } from './shared';
 import { readDiff, type RunGit } from './git';
@@ -244,9 +244,9 @@ export function activate(context: MainContext) {
         if (/[\x00-\x08\x0b\x0e-\x1f]/.test(text)) throw new Error('暂不支持二进制文件');
         return text;
       })),
-    context.ui.handle('resolve', ({ machine, path, sessionId, base }: { machine: FileClick['machine']; path?: string; sessionId?: string; base?: string }) =>
+    context.ui.handle('resolve', ({ machine, path, workspaceId, base }: { machine: FileClick['machine']; path?: string; workspaceId?: string; base?: string }) =>
       withConnection(machine, async (connection) => {
-        const target = path === undefined ? await connection.pty.cwd(sessionId!) : posix.resolve(base!, path);
+        const target = path === undefined ? await context.request<string>(workspaceAlias, 'cwd', { workspaceId }) : posix.resolve(base!, path);
         const stat = await connection.fs.stat(target);
         if (!stat) throw new Error(`路径不存在: ${target}`);
         return { type: stat.isDirectory ? 'directory' : 'file', machine, path: target };
