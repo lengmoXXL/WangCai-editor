@@ -40,7 +40,7 @@ type Caret = { line: number; column: number };
 type Jump = { next: () => void; previous: () => void };
 type Held = {
   view: () => EditorView; write: (oldText: string, newText: string) => void; count: () => number;
-  rewrap: (on: boolean) => void; reveal: () => void;
+  rewrap: (on: boolean) => void;
   now: (state?: EditorState) => Caret; seat: (line: number, column: number) => number;
   place: (side: 'a' | 'b' | undefined, line?: number, column?: number, top?: number) => void;
 };
@@ -145,12 +145,6 @@ function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, 
       const line = state.doc.lineAt(head);
       return { line: line.number, column: head - line.from + 1 };
     };
-    const reveal = () => {
-      const head = active.state.selection.main.head;
-      const coords = active.coordsAtPos(head);
-      const box = scroller.getBoundingClientRect();
-      if (!coords || coords.top < box.top || coords.bottom > box.bottom) active.dispatch({ effects: EditorView.scrollIntoView(head, { y: 'nearest' }) });
-    };
     // Each buffer is its own history visit: show the entry's side and seat it at the line/scroll that visit remembered.
     const place = (side: 'a' | 'b' | undefined, line?: number, column?: number, top?: number) => {
       const view = side === 'a' ? views[0] : views[views.length - 1];
@@ -209,7 +203,7 @@ function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, 
       if (windowPending && (key === 'h' || key === 'l')) { windowPending = false; switchSide(key === 'h' ? 'a' : 'b'); take(); }
     };
     window.addEventListener('keydown', onKey, true);
-    held.current = { view: () => active, write, count, rewrap, reveal, now, seat: (line, column) => seat(active, line, column), place };
+    held.current = { view: () => active, write, count, rewrap, now, seat: (line, column) => seat(active, line, column), place };
     for (const view of views) diffOpen.set(view, openFile);
     return () => {
       keptScroll.current = scroller.scrollTop;
@@ -232,7 +226,6 @@ function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, 
     const view = pane.view();
     if (view.state.selection.main.head !== pos) view.dispatch({ selection: { anchor: pos } });
     blocks(pane.count());
-    pane.reveal();
   }, [diff]);
 
   useEffect(() => { held.current?.rewrap(wrap); }, [wrap]);

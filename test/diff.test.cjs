@@ -163,4 +163,33 @@ test('a vertical move with the caret scrolled off screen steps one line rather t
   assert.deepEqual(errors, []);
 }));
 
+test('a worktree refresh keeps the scroll where the reader left it, not at the caret', { timeout: 180000 }, () => withWindow('wangcai-editor-diff-refresh', lists, async ({ home, page, errors }) => {
+  const lines = Array.from({ length: 300 }, (_, at) => `const line${at} = ${at};`);
+  lines[150] = 'const OLD = 1;';
+  const oldText = lines.join('\n') + '\n';
+  lines[150] = 'const NEW = 2;';
+  const file = repoWithChange(home, oldText, lines.join('\n') + '\n');
+
+  await openEditorWorkspace(page);
+  await clickFile(page, { type: 'file', machine, path: `git://${file}@:index~:worktree` });
+  await forceReading(page, '双栏');
+  await until(() => page.locator(`${diffHost} .cm-mergeView`).count().then(n => n > 0));
+  await page.locator(`${sideB} .cm-content`).focus();
+  await page.keyboard.type('gg');
+  await page.waitForTimeout(200);
+  const scroller = '.editor-diff .cm-mergeView';
+  await page.evaluate((s) => { document.querySelector(s).scrollTop = 2000; }, scroller);
+  await page.waitForTimeout(300);
+  const before = await page.evaluate((s) => document.querySelector(s).scrollTop, scroller);
+  assert.ok(before > 1000, 'the reader scrolled away from the caret');
+
+  // A second change on disk refreshes the comparison; the scroll stays where the reader left it.
+  lines[200] = 'const EXTERNAL = 9;';
+  writeFileSync(file, lines.join('\n') + '\n');
+  await until(() => page.getByRole('button', { name: '差异设置' }).getAttribute('title').then(t => /2 处改动/.test(t ?? '')));
+  const after = await page.evaluate((s) => document.querySelector(s).scrollTop, scroller);
+  assert.ok(Math.abs(after - before) < 50, `the refresh yanked the scroll: ${before} -> ${after}`);
+  assert.deepEqual(errors, []);
+}));
+
 
