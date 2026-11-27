@@ -29,6 +29,33 @@ let font: Font;
 let fontSizes: Record<string, number>;
 let theme: Theme;
 let bus: UiContext['global'];
+
+// Vim collapses a visual selection on the paste key's keydown, before the paste event lands, so a plain paste would
+// append at the caret instead of replacing the selection. Remember the selection as the key goes down and spend it
+// on the paste event, ahead of vim.
+const mac = /Mac/.test(navigator.platform);
+const pasteRange = new WeakMap<EditorView, { from: number; to: number }>();
+const pasteOverSelection = Prec.high(EditorView.domEventHandlers({
+  keydown: (event, view) => {
+    const sel = view.state.selection.main;
+    if (event.key === 'v' && (mac ? event.metaKey : event.ctrlKey) && !sel.empty) pasteRange.set(view, { from: sel.from, to: sel.to });
+    return false;
+  },
+  paste: (event, view) => {
+    const range = pasteRange.get(view);
+    pasteRange.delete(view);
+    const text = event.clipboardData?.getData('text/plain');
+    if (!range || text === undefined) return false;
+    event.preventDefault();
+    view.dispatch({
+      changes: { from: range.from, to: range.to, insert: text },
+      selection: { anchor: range.from + text.length },
+      scrollIntoView: true, userEvent: 'input.paste',
+    });
+    return true;
+  },
+}));
+
 // The extensions every view shares: made once in mount(), and taken by each view as it is built.
 let chrome: Extension[] = [];
 let services: LanguageServices | undefined;
@@ -976,7 +1003,7 @@ export async function mount(_container: HTMLElement, context: UiContext) {
       return true;
     },
   }]));
-  chrome = [tab, ...viewChrome, undoHistory(),
+  chrome = [tab, pasteOverSelection, ...viewChrome, undoHistory(),
     EditorState.tabSize.of(2), indentUnit.of('  ')];
   services = new LanguageServices(context);
   for (const [key, history] of Object.entries(await context.ui.request<Record<string, History>>('history'))) histories.set(key, history);

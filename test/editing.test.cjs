@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { alert, backButton, codeShowing, dirtyMark, drawnLines, lists, showAfter, showFile, shownPanel, showWritten, typeInto } = require('./editor-ui.cjs');
+const { alert, backButton, codeContent, codeShowing, dirtyMark, drawnLines, lists, selectionMarks, showAfter, showFile, shownPanel, showWritten, typeInto } = require('./editor-ui.cjs');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 // The keys that used to write the file, and which now do nothing: the buffer is written back on its own.
@@ -169,5 +169,17 @@ test('a write that fails says so over the page, keeps the text, and takes the wo
   await alert(shownPanel(page)).filter({ hasText: 'Permission denied' }).waitFor();
   await until(async () => (await alert(shownPanel(page)).count()) === 0);
   chmodSync(directory, 0o755);
+  assert.deepEqual(errors, []);
+}));
+
+test('pasting over a selection replaces it rather than appending at the caret', { timeout: 120000 }, () => withWindow('wangcai-editor-paste-selection', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'paste.ts');
+  await showWritten(page, file, 'alpha\nbeta\n', 'alpha');
+  await page.evaluate(() => navigator.clipboard.writeText('PASTED'));
+  await codeContent(shownPanel(page)).focus();
+  await page.keyboard.type('viw');
+  await until(async () => (await selectionMarks(shownPanel(page)).count()) > 0);
+  await page.keyboard.press('Meta+v');
+  await until(() => readFileSync(file, 'utf8') === 'PASTED\nbeta\n');
   assert.deepEqual(errors, []);
 }));
