@@ -1,10 +1,10 @@
 const { before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { buildSync } = require('esbuild');
-const { activate } = require('../main.cjs');
+const { activate } = require('../../main.cjs');
 
 const { outputFiles } = buildSync({ stdin: { resolveDir: __dirname, contents: `
-  export * from '../ui/files';
+  export * from '../../ui/files';
   export { EditorState, Transaction } from '@codemirror/state';
   export { history, undo } from '@codemirror/commands';
 ` }, bundle: true, format: 'esm', write: false });

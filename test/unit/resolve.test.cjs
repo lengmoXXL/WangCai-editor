@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { activate } = require('../main.cjs');
+const { activate } = require('../../main.cjs');
 
 test('address resolution uses the requested machine and directory, and releases connections', async () => {
   const machine = { id: 'remote', name: 'remote', host: 'example.com' };
@@ -41,7 +41,7 @@ test('address resolution uses the requested machine and directory, and releases 
     assert.deepEqual(paths, ['/work/file.md', '/work/notes with spaces.md', '/work', '/work', '/work/missing']);
     assert.equal(disconnected, 5);
   } finally {
-    dispose();
+    await dispose();
   }
   assert.equal(handlers.size, 0);
 });

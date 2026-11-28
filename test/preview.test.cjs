@@ -1,4 +1,4 @@
-const { test } = require('node:test');
+const { after, afterEach, before, describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
@@ -99,43 +99,71 @@ test('a task checkbox sits on the text centreline and its source marker reads bl
   assert.deepEqual(errors, []);
 }));
 
-test('a fenced code block is drawn as a bordered block', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-code', lists, async ({ home, page, errors }) => {
-  const file = join(home, 'code.md');
-  await showWritten(page, file, '```ts\nconst x = 1;\n```\n\nafter\n', 'const x');
-  await lineBoxes(shownPanel(page)).filter({ hasText: 'after' }).click();
-  await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
-  assert.ok(await md(page, 'cm-md-codeblock-bottom').count() > 0);
-  assert.ok(await md(page, 'cm-md-codeblock').count() > 0);
-  assert.equal(await md(page, 'cm-md-code-lang').innerText(), 'ts');
-  assert.ok(await md(page, 'cm-md-code-lang').evaluate((el) => el.closest('.cm-line').classList.contains('cm-md-codeblock-top')));
-  assert.deepEqual(errors, []);
-}));
+describe('Markdown code block previews', () => {
+  let home, page, errors, windowClosed;
+  // withWindow owns teardown until the last selected case finishes.
+  const finished = Promise.withResolvers();
+  before(async () => {
+    const ready = Promise.withResolvers();
+    windowClosed = withWindow('wangcai-editor-preview-code', lists, fixture => {
+      ready.resolve(fixture);
+      return finished.promise;
+    });
+    ({ home, page, errors } = await Promise.race([ready.promise, windowClosed]));
+  });
+  afterEach(() => assert.deepEqual(errors.splice(0), []));
+  after(() => { finished.resolve(); return windowClosed; });
 
-test('an indented code block keeps its box', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-indentcode', lists, async ({ home, page, errors }) => {
-  const file = join(home, 'indent.md');
-  await showWritten(page, file, '    const x = 1;\n    const y = 2;\n\ntail\n', 'tail');
-  await lineBoxes(shownPanel(page)).filter({ hasText: 'tail' }).click();
-  await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
-  assert.ok(await md(page, 'cm-md-codeblock-bottom').count() > 0);
-  assert.deepEqual(errors, []);
-}));
+  test('a fenced code block is drawn as a bordered block', { timeout: 120000 }, async () => {
+    const file = join(home, 'code.md');
+    await showWritten(page, file, '```ts\nconst x = 1;\n```\n\nafter\n', 'const x');
+    await lineBoxes(shownPanel(page)).filter({ hasText: 'after' }).click();
+    await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
+    assert.ok(await md(page, 'cm-md-codeblock-bottom').count() > 0);
+    assert.ok(await md(page, 'cm-md-codeblock').count() > 0);
+    assert.equal(await md(page, 'cm-md-code-lang').innerText(), 'ts');
+    assert.ok(await md(page, 'cm-md-code-lang').evaluate((el) => el.closest('.cm-line').classList.contains('cm-md-codeblock-top')));
+  });
 
-test('an unnamed fence hides its first row like the last', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-unnamed', lists, async ({ home, page, errors }) => {
-  const file = join(home, 'unnamed.md');
-  await showWritten(page, file, '# T\n\n```\nplain\n```\n\ntail\n', 'tail');
-  await lineBoxes(shownPanel(page)).filter({ hasText: 'tail' }).click();
-  await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
-  assert.equal(await md(page, 'cm-md-code-lang').count(), 0);
-  assert.equal(await md(page, 'cm-md-codeblock-lang').count(), 0);
-  assert.equal(await md(page, 'cm-md-codeblock-top').innerText(), 'plain');
-  assert.equal(await lineBoxes(shownPanel(page)).filter({ hasText: '```' }).count(), 0);
-  for (const language of ['js', '']) {
-    writeFileSync(file, `# T\n\n\`\`\`${language}\n\n\`\`\`\n\ntail`);
-    const row = md(page, language ? 'cm-md-codeblock-start' : 'cm-md-codeblock-top');
-    await until(async () => await row.evaluateAll(nodes => nodes.some(el => !el.textContent && el.classList.contains('cm-md-codeblock-bottom'))));
-  }
-  assert.deepEqual(errors, []);
-}));
+  test('an indented code block keeps its box', { timeout: 120000 }, async () => {
+    const file = join(home, 'indent.md');
+    await showWritten(page, file, '    const x = 1;\n    const y = 2;\n\ntail\n', 'tail');
+    await lineBoxes(shownPanel(page)).filter({ hasText: 'tail' }).click();
+    await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
+    assert.ok(await md(page, 'cm-md-codeblock-bottom').count() > 0);
+  });
+
+  test('an unnamed fence hides its first row like the last', { timeout: 120000 }, async () => {
+    const file = join(home, 'unnamed.md');
+    await showWritten(page, file, '# T\n\n```\nplain\n```\n\ntail\n', 'tail');
+    await lineBoxes(shownPanel(page)).filter({ hasText: 'tail' }).click();
+    await until(async () => (await md(page, 'cm-md-codeblock-top').count()) > 0);
+    assert.equal(await md(page, 'cm-md-code-lang').count(), 0);
+    assert.equal(await md(page, 'cm-md-codeblock-lang').count(), 0);
+    assert.equal(await md(page, 'cm-md-codeblock-top').innerText(), 'plain');
+    assert.equal(await lineBoxes(shownPanel(page)).filter({ hasText: '```' }).count(), 0);
+    for (const language of ['js', '']) {
+      writeFileSync(file, `# T\n\n\`\`\`${language}\n\n\`\`\`\n\ntail`);
+      const row = md(page, language ? 'cm-md-codeblock-start' : 'cm-md-codeblock-top');
+      await until(async () => await row.evaluateAll(nodes => nodes.some(el => !el.textContent && el.classList.contains('cm-md-codeblock-bottom'))));
+    }
+  });
+
+  test('rendered code carries highlight spans over the box', { timeout: 120000 }, async () => {
+    const file = join(home, 'codehl.md');
+    await showWritten(page, file, '# T\n\n```ts\nconst a = 1;\n```\n\ntail\n', 'tail');
+    const keyword = md(page, 'cm-md-codeblock').locator('.hljs-keyword');
+    await until(async () => (await keyword.count()) > 0);
+    const colour = await keyword.first().evaluate((el) => getComputedStyle(el).color);
+    const plain = await md(page, 'cm-md-codeblock').first().evaluate((el) => getComputedStyle(el).color);
+    assert.notEqual(colour, plain);
+    writeFileSync(file, '# T\n\n```ts\nconst answer = 42;');
+    await md(page, 'cm-md-codeblock').filter({ hasText: 'const answer = 42;' }).waitFor();
+    writeFileSync(file, '# T\n\n> ```js\n> const a = 1;\n> const b = 2;\n> const c = 3;\n> ```');
+    await md(page, 'cm-md-codeblock-bottom').filter({ hasText: 'const c = 3;' }).waitFor();
+    assert.deepEqual(await keyword.allTextContents(), ['const', 'const', 'const']);
+  });
+});
 
 test('a drag across code lines selects them visibly and copies every line', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-codecopy', lists, async ({ home, page, errors }) => {
   const file = join(home, 'codecopy.md');
@@ -174,22 +202,6 @@ test('code lines stay editable text and a drag across them copies every line', {
   await page.keyboard.press('I');
   await page.keyboard.type('Q');
   await until(async () => (await lineBoxes(shownPanel(page)).filter({ hasText: 'Qconst a = 1;' }).count()) > 0);
-  assert.deepEqual(errors, []);
-}));
-
-test('rendered code carries highlight spans over the box', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-codehl', lists, async ({ home, page, errors }) => {
-  const file = join(home, 'codehl.md');
-  await showWritten(page, file, '# T\n\n```ts\nconst a = 1;\n```\n\ntail\n', 'tail');
-  const keyword = md(page, 'cm-md-codeblock').locator('.hljs-keyword');
-  await until(async () => (await keyword.count()) > 0);
-  const colour = await keyword.first().evaluate((el) => getComputedStyle(el).color);
-  const plain = await md(page, 'cm-md-codeblock').first().evaluate((el) => getComputedStyle(el).color);
-  assert.notEqual(colour, plain);
-  writeFileSync(file, '# T\n\n```ts\nconst answer = 42;');
-  await md(page, 'cm-md-codeblock').filter({ hasText: 'const answer = 42;' }).waitFor();
-  writeFileSync(file, '# T\n\n> ```js\n> const a = 1;\n> const b = 2;\n> const c = 3;\n> ```');
-  await md(page, 'cm-md-codeblock-bottom').filter({ hasText: 'const c = 3;' }).waitFor();
-  assert.deepEqual(await keyword.allTextContents(), ['const', 'const', 'const']);
   assert.deepEqual(errors, []);
 }));
 

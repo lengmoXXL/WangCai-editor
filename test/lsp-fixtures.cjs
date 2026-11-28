@@ -1,55 +1,39 @@
-const { execFileSync } = require('node:child_process');
-const { existsSync, readFileSync, writeFileSync } = require('node:fs');
-const { tmpdir } = require('node:os');
+const { execFileSync, spawnSync } = require('node:child_process');
+const { statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
+const { wangcaiApp } = require('@lengmoxxl/wangcai-testkit');
 const { editorPlugin, lists, lspDot, shownPanel, showWritten } = require('./editor-ui.cjs');
 
-// The compiler options a server is asked about, strict enough to report a type error: every TypeScript project here is
-// written with them.
-const tsconfig = '{"compilerOptions":{"strict":true}}\n';
-
-// A TypeScript project shown with its server up: the compiler options are written out and `main.ts` holds `source`, a
-// case being free to write files of its own around it; `text` is what that case knows the page says. The path of that file
-// is handed back, since a case that writes to it or jumps to it would otherwise spell it again.
 const openTs = async (home, page, source, text) => {
   const main = join(home, 'main.ts');
-  writeFileSync(join(home, 'tsconfig.json'), tsconfig);
+  writeFileSync(join(home, 'tsconfig.json'), '{"compilerOptions":{"strict":true}}\n');
   await showWritten(page, main, source, text);
   await lspDot(shownPanel(page), 'open').waitFor({ timeout: 60000 });
   return main;
 };
 
-// A rust project of one file, written and shown.
-const openRust = async (home, page) => {
-  const main = join(home, 'main.rs');
-  await showWritten(page, main, 'fn main() {}\n', 'fn main');
+const openRust = (home, page) => showWritten(page, join(home, 'main.rs'), 'fn main() {}\n', 'fn main');
+
+const languageServers = (home) => {
+  const processes = execFileSync('ps', ['-Ao', 'pid=,command='], { encoding: 'utf8' });
+  const pids = processes.split('\n').filter(line => line.includes('bin/typescript-language-server --stdio'))
+    .map(line => line.trimStart().split(/\s+/, 1)[0]);
+  if (!pids.length) return [];
+  const cwd = spawnSync('lsof', ['-a', '-p', pids.join(','), '-d', 'cwd', '-t', home], { encoding: 'utf8' });
+  if (cwd.error) throw cwd.error;
+  if (cwd.status !== 0 && (cwd.status !== 1 || cwd.stderr)) throw new Error(cwd.stderr || `lsof exited with ${cwd.signal || cwd.status}`);
+  return cwd.stdout.trim().split(/\s+/).filter(Boolean);
 };
 
-// The processes whose command line holds this text: ps is read once and cut here, so every probe cuts the same way.
-const pids = (text) => execFileSync('sh', ['-c', 'ps -Ao pid,command'], { encoding: 'utf8' })
-  .split('\n').filter((line) => line.includes(text))
-  .map((line) => line.trim().split(' ')[0]);
-
-// The language servers running in this test's fixture: another test's window starts its own, with its own home.
-const languageServers = (home) => pids('bin/typescript-language-server --stdio')
-  .filter((pid) => execFileSync('sh', ['-c', `lsof -p ${pid} -a -d cwd -Fn 2>/dev/null || true`], { encoding: 'utf8' }).includes(`n${home}`));
+const nodeServer = (env, ...args) => execFileSync(join(wangcaiApp(), 'wangcaicli/dist/debug/wangcai'), ['server', ...args], { env, encoding: 'utf8' });
 
 // A server that dies leaves a handshake nobody answers, which the client reports as a request that timed out: that is the
 // failure these cases are about, and it is not a page's own error.
 const unexpected = (errors) => errors.filter((text) => !text.includes('Request timed out'));
 
-// A window whose server for one language is the command given: the rest of its plugin list is the one every case runs.
 const serverFor = (language, command) => ({ ...lists, tabs: lists.tabs.map((tab) => (tab === editorPlugin ? { id: tab, config: { lsp: { [language]: { command } } } } : tab)) });
 
-// A server that counts its own starts in a file of its own, and `lives` says which start is the one that stays past the
-// window that gives a server its tries back: every other start dies at once.
-const countingServer = (name, lives) => {
-  const file = join(tmpdir(), `wangcai-${name}-${process.pid}-${Date.now()}`);
-  return { file, server: serverFor('rust', ['/bin/sh', '-c', `n=$(($(cat '${file}' 2>/dev/null || echo 0)+1)); echo $n > '${file}'; [ ${lives} ] && sleep 40; exit 1`]) };
-};
-
-// How many times the server of a case has started, as its own command counts them in that file.
-const starts = (file) => (existsSync(file) ? Number(readFileSync(file, 'utf8')) : 0);
+const starts = (home) => statSync(join(home, 'lsp-starts')).size;
 
 const treeNames = {
   space: 'Space',
@@ -171,4 +155,4 @@ const flatServer = symbolsServer(flatSymbols);
 const serverSaid = 'Indexing done';
 const messageServer = serverFor('typescript', ['node', join(__dirname, 'message-server.cjs'), serverSaid]);
 
-module.exports = { openTs, openRust, pids, languageServers, unexpected, serverFor, countingServer, starts, treeNames, areaNameAt, flatNames, treeBody, flatBody, treeServer, flatServer, serverSaid, messageServer };
+module.exports = { openTs, openRust, nodeServer, languageServers, unexpected, serverFor, starts, treeNames, areaNameAt, flatNames, treeBody, flatBody, treeServer, flatServer, serverSaid, messageServer };

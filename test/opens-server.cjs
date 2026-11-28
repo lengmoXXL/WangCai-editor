@@ -1,10 +1,15 @@
 // LSP stub that counts its own starts in a file and says the name of every file it is told about, so a case can wait for
 // the server behind one file to have read it.
-const { existsSync, readFileSync, writeFileSync } = require('node:fs');
-const { basename } = require('node:path');
+const { appendFileSync, statSync } = require('node:fs');
+const { homedir } = require('node:os');
+const { basename, join } = require('node:path');
 
-const counted = process.argv[2];
-writeFileSync(counted, String((existsSync(counted) ? Number(readFileSync(counted, 'utf8')) : 0) + 1));
+// A single-byte append also records simultaneous starts in different project roots.
+const counted = join(homedir(), 'lsp-starts');
+appendFileSync(counted, '.');
+const attempt = statSync(counted).size;
+// Expose each failed start in the status tooltip through its exit code.
+if (attempt <= Number(process.argv[2] ?? 0)) process.exit(attempt);
 
 const send = (body) => {
   const text = JSON.stringify({ jsonrpc: '2.0', ...body });

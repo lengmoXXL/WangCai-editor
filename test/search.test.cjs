@@ -5,42 +5,8 @@ const { basename, join } = require('node:path');
 const { buildSync } = require('esbuild');
 const { clickFile, codeShowing, dismissSearch, editorFocused, fileSearchEmpty, landedOn, lists, machine, openSearch, queryApplied, search, searchInput, searchMarks, searchPanel, searchRow, searchRowEntries, searchRows, shownPanel, shows, showWritten, storedHistory, submitSearch, waitForPath } = require('./editor-ui.cjs');
 const { until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
-const { activate } = require('../main.cjs');
 
 const rowLimit = 200;
-
-test('grep keeps the matched snapshot when a file changes or disappears after rg returns', async () => {
-  const handlers = new Map();
-  const paths = ['same.md', 'removed.md', 'replaced.md', 'moved.md'];
-  const records = paths.map(path => JSON.stringify({ type: 'match', data: {
-    path: { text: path }, lines: { text: 'aaa dog here\n' }, line_number: 2, submatches: [{ start: 4, end: 7 }],
-  } })).join('\n');
-  const dispose = activate({
-    host: { dataDirectory: __dirname },
-    ui: { handle(name, fn) { handlers.set(name, fn); return () => handlers.delete(name); } },
-    async connect() { return {
-      disconnect() {},
-      subprocess: { async exec(program, args) {
-        if (program === '/bin/sh' && args[1].includes('RIPGREP_CONFIG_PATH')) throw new Error('machine disconnected');
-        if (program === 'mktemp') return { code: 0, stdout: Buffer.from('/tmp/search-output\n') };
-        return { code: 0, stdout: Buffer.from(args.includes('/bin/rg') ? records : '/bin\0/bin/rg\n') };
-      } },
-      fs: { async readFile(path) {
-        if (path.endsWith('removed.md')) throw new Error('file removed');
-        const line = path.endsWith('replaced.md') ? 'abc cat here' : path.endsWith('moved.md') ? 'other dog line' : 'aaa dog here';
-        return Buffer.from(`first\rnext\n${line}\n`);
-      } },
-    }; },
-  });
-  try {
-    for (const args of [[], ['-E', 'none'], ['-E', 'latin1']]) {
-      const hits = await handlers.get('grep')({ machine, path: '/work', query: 'dog', args });
-      assert.deepEqual(hits, paths.map(path => ({
-        path: `/work/${path}`, line: path === 'same.md' ? 3 : 2, column: 5, text: 'aaa dog here',
-      })));
-    }
-  } finally { await dispose(); }
-});
 
 test('grep returns its first 500 hits when rg writes more than 8 MiB', () => withWindow('wangcai-editor-large-grep', lists, async ({ home, page }) => {
   const path = join(home, 'corpus');

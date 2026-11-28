@@ -46,6 +46,10 @@ const collectErrors = (page, errors) => {
 const alert = (scope) => scope.getByRole('alert');
 
 const openWorkspaces = (page) => page.evaluate(async (plugin) => (await window.wangcai.call('request', plugin, 'config')).workspaces, terminalAgentPlugin);
+const localMachineState = (page) => page.evaluate(async ({ plugin, id }) => {
+  const states = await window.wangcai.call('request', plugin, 'states');
+  return states.find(state => state.machineId === id);
+}, { plugin: terminalAgentPlugin, id: machine.id });
 const storedHistory = (page) => page.evaluate((plugin) => window.wangcai.call('request', plugin, 'history'), editorPlugin);
 
 // The editor receives file clicks once its subscription has mounted.
@@ -226,6 +230,7 @@ module.exports = {
   collectErrors,
   alert,
   openWorkspaces,
+  localMachineState,
   storedHistory,
   clickFile,
   goToPath,

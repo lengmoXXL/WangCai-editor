@@ -34,7 +34,8 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "test": "node build.mjs && node --test --test-concurrency=4 test/*.test.cjs",
+    "test": "node build.mjs && node --test --test-concurrency=4 test/*.test.cjs test/unit/*.test.cjs",
+    "test:unit": "node build.mjs && node --test --test-concurrency=4 test/unit/*.test.cjs",
     "typecheck": "tsc"
   },
   "devDependencies": {

@@ -3,9 +3,9 @@ const assert = require('node:assert/strict');
 const { mkdtempSync, rmSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-const { activate } = require('../main.cjs');
+const { activate } = require('../../main.cjs');
 
-test('navigation histories persist across plugin activations and removals', () => {
+test('navigation histories persist across plugin activations and removals', async () => {
   const dataDirectory = mkdtempSync(join(tmpdir(), 'wangcai-editor-history-'));
   const handlers = new Map();
   const context = {
@@ -22,21 +22,21 @@ test('navigation histories persist across plugin activations and removals', () =
       workspace: { entries: [other], index: 0 },
     };
     handlers.get('save-history')(histories);
-    dispose();
+    await dispose();
     assert.equal(handlers.size, 0);
     dispose = activate(context);
     assert.deepEqual(handlers.get('history')(), histories);
     delete histories.workspace;
     handlers.get('save-history')(histories);
-    dispose();
+    await dispose();
     dispose = activate(context);
     assert.deepEqual(handlers.get('history')(), histories);
     handlers.get('save-history')({});
-    dispose();
+    await dispose();
     dispose = activate(context);
     assert.deepEqual(handlers.get('history')(), {});
   } finally {
-    dispose();
+    await dispose();
     rmSync(dataDirectory, { recursive: true, force: true });
   }
 });
