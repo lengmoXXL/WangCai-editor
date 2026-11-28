@@ -1,19 +1,18 @@
 import { forceParsing, syntaxTree } from '@codemirror/language';
-import { Compartment, Facet, Prec, RangeSet, StateField, type EditorState, type Range, type Text } from '@codemirror/state';
-import type { SyntaxNode } from '@lezer/common';
-import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutterLineClass, type DecorationSet, type ViewUpdate } from '@codemirror/view';
-import { getCM } from '@replit/codemirror-vim';
+import { Compartment, EditorSelection, Facet, RangeSet, StateField, type EditorState, type Range, type Text } from '@codemirror/state';
+import { NodeWeakMap, type SyntaxNode } from '@lezer/common';
+import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutterLineClass, keymap, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { cursorLineDown, cursorLineUp, selectLineDown, selectLineUp } from '@codemirror/commands';
 import { common, createLowlight } from 'lowlight';
+import type { UiContext } from '@lengmoxxl/sdk/channel';
+import { directoryOf, type FileClick, type ImageBytes } from '../shared';
 
-// The channel a local image's bytes come through: the page cannot reach the machine's disk for an <img> of its own, so
-// each view is handed a resolver turning the path a note names into an address the picture can load.
-export type PreviewImageSource = (url: string) => Promise<string>;
-export const previewImageSource = Facet.define<PreviewImageSource>();
-// A picture's bytes arrive after its widget is laid out and change its height. The view only re-reads line heights when
-// its configuration changes, so an image lands by reconfiguring this empty compartment: that forces the measure that
-// keeps the gutter and the scroll aligned with the picture.
-export const imageMeasure = new Compartment();
-// A horizontal rule is drawn as a line of its own rather than the dashes that name it.
+// Markdown image paths refer to the machine hosting the file.
+type PreviewImageSource = (url: string) => Promise<string>;
+const previewImageSource = Facet.define<PreviewImageSource>();
+// Short documents fill the pane even when an image grows. A theme change forces CodeMirror to measure individual lines.
+const imageLayout = new Compartment();
+const imageTheme = EditorView.theme({});
 class RuleWidget extends WidgetType {
   toDOM() {
     const el = document.createElement('div');
@@ -21,13 +20,10 @@ class RuleWidget extends WidgetType {
     return el;
   }
   eq() { return true; }
-  ignoreEvent() { return true; }
 }
 
-// An image is shown where its markdown sits: a remote one loads straight from its address, a local one asks the channel
-// for its bytes and draws them, a named card standing in until they arrive — or for good when they cannot be had.
 class ImageWidget extends WidgetType {
-  constructor(readonly alt: string, readonly url: string, readonly source?: PreviewImageSource) { super(); }
+  constructor(readonly alt: string, readonly url: string, readonly source: PreviewImageSource) { super(); }
   toDOM(view: EditorView) {
     const wrap = document.createElement('span');
     wrap.className = 'cm-md-image';
@@ -35,8 +31,9 @@ class ImageWidget extends WidgetType {
       const img = document.createElement('img');
       img.alt = this.alt;
       img.loading = 'lazy';
-      const grown = () => view.dispatch({ effects: imageMeasure.reconfigure(EditorView.theme({ '.cm-md-image': {} })) });
-      img.addEventListener('load', grown);
+      img.addEventListener('load', () => {
+        if (img.isConnected) view.dispatch({ effects: imageLayout.reconfigure(imageLayout.get(view.state) === imageTheme ? [] : imageTheme) });
+      });
       img.src = src;
       return img;
     };
@@ -52,26 +49,23 @@ class ImageWidget extends WidgetType {
     name.className = 'cm-md-image-name';
     name.textContent = this.alt || this.url;
     wrap.append(label, name);
-    if (this.source) {
-      this.source(this.url)
-        .then((src) => {
-          if (!wrap.isConnected) return;
-          wrap.replaceChildren(picture(src));
-          wrap.classList.remove('cm-md-image-local');
-        })
-        .catch(() => {
-          if (!wrap.isConnected) return;
-          wrap.classList.add('cm-md-image-missing');
-          wrap.title = '无法加载图片';
-        });
-    }
+    this.source(this.url)
+      .then((src) => {
+        if (!wrap.isConnected) return;
+        wrap.replaceChildren(picture(src));
+        wrap.classList.remove('cm-md-image-local');
+      })
+      .catch(() => {
+        if (!wrap.isConnected) return;
+        wrap.classList.add('cm-md-image-missing');
+        wrap.title = '无法加载图片';
+      });
     return wrap;
   }
   eq(other: ImageWidget) { return other.alt === this.alt && other.url === this.url; }
   ignoreEvent() { return false; }
 }
 
-// A task list marker is drawn as a checkbox, and clicking it ticks the task over in the text itself.
 class TaskWidget extends WidgetType {
   constructor(readonly checked: boolean) { super(); }
   toDOM(view: EditorView) {
@@ -101,8 +95,6 @@ class TaskWidget extends WidgetType {
 
 type Seg = { text: string; cls?: string };
 
-// Which preview class an inline node wears, the span of its content, and the span the whole mark consumes: one place
-// the page's main loop and a table cell both read, so the vocabulary and the mark boundaries live once.
 const inlineMark = (node: SyntaxNode): { cls: string; from: number; to: number; start: number; end: number } | null => {
   const cls = node.name === 'StrongEmphasis' ? 'cm-md-bold' : node.name === 'Emphasis' ? 'cm-md-italic'
     : node.name === 'Strikethrough' ? 'cm-md-strike' : node.name === 'InlineCode' ? 'cm-md-code' : undefined;
@@ -117,8 +109,7 @@ const inlineMark = (node: SyntaxNode): { cls: string; from: number; to: number; 
   return null;
 };
 
-// A table cell's inline marks, read from the syntax tree the page already parses rather than re-parsed by hand: text
-// between marks stays plain, and an escaped pipe belongs to the cell instead of cutting it in two.
+// Use the same Lezer inline ranges for table cells and normal text.
 const cellSegs = (cell: SyntaxNode, doc: Text): Seg[] => {
   const segs: Seg[] = [];
   let last = cell.from;
@@ -135,51 +126,59 @@ const cellSegs = (cell: SyntaxNode, doc: Text): Seg[] => {
   return segs.map((s) => ({ ...s, text: s.text.replace(/\\\|/g, '|') }));
 };
 
-// The drawn grid is a widget: CodeMirror owns neither its selection nor its copy, and it hides the browser's native
-// selection inside the content. So a drag picks a rectangle of cells, painted here, and Copy lifts it as tab-separated
-// text. One pick at a time, held outside the widget so a redraw of the grid does not lose it.
-let picked: { table: HTMLTableElement; from: [number, number]; to: [number, number] } | null = null;
+// CodeMirror hides the native selection inside a widget. A table drag selects cells and copies them as TSV.
+let tablePick: { table: HTMLTableElement; clear: () => void } | undefined;
 
-const clearPick = () => {
-  if (picked) for (const row of Array.from(picked.table.rows)) for (const cell of Array.from(row.cells)) cell.classList.remove('cm-md-table-picked');
-  picked = null;
-};
+function selectCells(table: HTMLTableElement, first: HTMLTableCellElement) {
+  tablePick?.clear();
+  const events = new AbortController();
+  const capture = { capture: true, signal: events.signal };
+  const clear = () => {
+    events.abort();
+    for (const cell of table.querySelectorAll('.cm-md-table-picked')) cell.classList.remove('cm-md-table-picked');
+    tablePick = undefined;
+  };
+  tablePick = { table, clear };
 
-const bounds = (from: [number, number], to: [number, number]): [number, number, number, number] =>
-  [Math.min(from[0], to[0]), Math.max(from[0], to[0]), Math.min(from[1], to[1]), Math.max(from[1], to[1])];
+  const firstRow = (first.parentElement as HTMLTableRowElement).rowIndex;
+  let rows: HTMLTableCellElement[][] = [];
+  const selectTo = (cell: HTMLTableCellElement) => {
+    const lastRow = (cell.parentElement as HTMLTableRowElement).rowIndex;
+    const left = Math.min(first.cellIndex, cell.cellIndex), right = Math.max(first.cellIndex, cell.cellIndex);
+    rows = [];
+    for (const row of table.rows) {
+      const inside = row.rowIndex >= Math.min(firstRow, lastRow) && row.rowIndex <= Math.max(firstRow, lastRow);
+      const selected: HTMLTableCellElement[] = [];
+      for (const member of row.cells) {
+        const picked = inside && member.cellIndex >= left && member.cellIndex <= right;
+        member.classList.toggle('cm-md-table-picked', picked);
+        if (picked) selected.push(member);
+      }
+      if (inside) rows.push(selected);
+    }
+  };
+  selectTo(first);
+  const move = (event: MouseEvent) => {
+    const over = event.target instanceof Element ? event.target.closest<HTMLTableCellElement>('td, th') : null;
+    if (over && table.contains(over)) selectTo(over);
+  };
+  window.addEventListener('mousemove', move, { signal: events.signal });
+  window.addEventListener('mouseup', () => window.removeEventListener('mousemove', move), { once: true, signal: events.signal });
+  document.addEventListener('copy', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.clipboardData?.setData('text/plain', rows.map(row => row.map(cell => cell.textContent).join('\t')).join('\n'));
+  }, capture);
+  document.addEventListener('mousedown', (event) => {
+    if (!table.contains(event.target as Node)) clear();
+  }, capture);
+  document.addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'c') return;
+    if (!['Meta', 'Control', 'Shift', 'Alt'].includes(event.key)) clear();
+  }, capture);
+}
 
-const paintPick = () => {
-  if (!picked) return;
-  const [r0, r1, c0, c1] = bounds(picked.from, picked.to);
-  Array.from(picked.table.rows).forEach((row, r) => Array.from(row.cells).forEach((cell, c) => {
-    cell.classList.toggle('cm-md-table-picked', r >= r0 && r <= r1 && c >= c0 && c <= c1);
-  }));
-};
-
-const pickText = () => {
-  if (!picked) return '';
-  const [r0, r1, c0, c1] = bounds(picked.from, picked.to);
-  return Array.from(picked.table.rows).slice(r0, r1 + 1)
-    .map((row) => Array.from(row.cells).slice(c0, c1 + 1).map((cell) => cell.textContent ?? '').join('\t'))
-    .join('\n');
-};
-
-document.addEventListener('copy', (event) => {
-  if (!picked || !picked.table.isConnected) return;
-  event.preventDefault();
-  event.stopPropagation();
-  event.clipboardData?.setData('text/plain', pickText());
-}, true);
-document.addEventListener('mousedown', (event) => {
-  if (picked && !picked.table.contains(event.target as Node)) clearPick();
-}, true);
-document.addEventListener('keydown', (event) => {
-  // Moving the caret or typing leaves the grid behind; Copy still reaches the pick, modifiers alone do not.
-  if (!((event.metaKey || event.ctrlKey) && event.key === 'c') && !['Meta', 'Control', 'Shift', 'Alt'].includes(event.key)) clearPick();
-}, true);
-
-// A table is drawn as a grid below the lines that name it, which keep their line boxes so vertical motion walks them;
-// the header is the TableHeader node and alignment the delimiter row, the way the preview tab draws GFM tables.
+// Keep the source line boxes so vertical Vim motions can traverse a rendered table.
 class TableWidget extends WidgetType {
   constructor(readonly rows: { header: boolean; cells: Seg[][] }[], readonly aligns: string[], readonly first: number) { super(); }
   toDOM() {
@@ -210,40 +209,23 @@ class TableWidget extends WidgetType {
       (row.header ? thead : tbody).appendChild(tr);
     }
     table.append(thead, tbody);
-    const cellOf = (target: EventTarget | null) => {
-      const el = target instanceof Element ? target.closest('td, th') : null;
-      return el && table.contains(el) ? (el as HTMLTableCellElement) : null;
-    };
     table.addEventListener('mousedown', (event) => {
-      const cell = cellOf(event.target);
+      const cell = event.target instanceof Element ? event.target.closest<HTMLTableCellElement>('td, th') : null;
       if (!cell || event.button !== 0) return;
-      // Keep CodeMirror's caret out of the table, so the grid stays drawn while it is picked.
+      // Moving the editor caret into the table would replace the grid with source.
       event.preventDefault();
       event.stopPropagation();
-      const at = (c: HTMLTableCellElement): [number, number] => [(c.parentElement as HTMLTableRowElement).rowIndex, c.cellIndex];
-      picked = { table, from: at(cell), to: at(cell) };
-      paintPick();
-      const move = (ev: MouseEvent) => {
-        const over = cellOf(ev.target);
-        if (over && picked) { picked.to = at(over); paintPick(); }
-      };
-      const up = () => {
-        window.removeEventListener('mousemove', move);
-        window.removeEventListener('mouseup', up);
-      };
-      window.addEventListener('mousemove', move);
-      window.addEventListener('mouseup', up);
+      selectCells(table, cell);
     });
     return table;
   }
+  destroy(dom: HTMLElement) { if (tablePick?.table === dom) tablePick.clear(); }
   eq(other: TableWidget) { return other.first === this.first && other.aligns.join() === this.aligns.join() && JSON.stringify(other.rows) === JSON.stringify(this.rows); }
-  ignoreEvent() { return true; }
 }
 
-// The YAML frontmatter of an Obsidian-style note, drawn as a block of properties: each key beside its value, an inline
-// list shown as chips. Built as text nodes so nothing in the file can inject markup of its own.
 class FrontmatterWidget extends WidgetType {
-  constructor(readonly text: string, readonly first: number) { super(); }
+  readonly first = 1;
+  constructor(readonly text: string) { super(); }
   toDOM() {
     const box = document.createElement('div');
     box.className = 'cm-md-frontmatter';
@@ -280,37 +262,38 @@ class FrontmatterWidget extends WidgetType {
     }
     return box;
   }
-  eq(other: FrontmatterWidget) { return other.text === this.text && other.first === this.first; }
-  ignoreEvent() { return true; }
+  eq(other: FrontmatterWidget) { return other.text === this.text; }
 }
 
 const lowlight = createLowlight(common);
 type Hast = { type: string; value?: string; properties?: { className?: string[] }; children?: Hast[] };
-const spanCache = new Map<string, { cls: string; from: number; to: number }[]>();
-// highlight.js spans for a code string, cached by language and text: the render pass runs on every selection change, and
-// re-highlighting the same visible code each time would pay for parsing it again.
-function codeSpans(language: string, code: string) {
-  const key = language + '\0' + code;
-  const hit = spanCache.get(key);
+const spanCache = new NodeWeakMap<{ cls: string; from: number; to: number }[]>();
+// A selection change redraws the preview without changing its parsed code blocks.
+function codeSpans(block: SyntaxNode, language: string, doc: Text, parts: SyntaxNode[]) {
+  if (!parts.length || !language || !lowlight.registered(language)) return [];
+  const hit = spanCache.get(block);
   if (hit) return hit;
   const spans: { cls: string; from: number; to: number }[] = [];
-  if (language && lowlight.registered(language)) {
-    let at = 0;
-    const walk = (node: Hast, cls?: string) => {
-      if (node.type === 'text') {
-        const len = (node.value ?? '').length;
-        if (cls && len) spans.push({ cls, from: at, to: at + len });
+  // Quotes and lists can split a single fenced program into disjoint source ranges.
+  let part = 0, at = parts[0].from;
+  const walk = (node: Hast, cls?: string) => {
+    if (node.type === 'text') {
+      let left = (node.value ?? '').length;
+      while (left && part < parts.length) {
+        const len = Math.min(left, parts[part].to - at);
+        if (cls && len) spans.push({ cls, from: at - block.from, to: at + len - block.from });
+        left -= len;
         at += len;
-      } else for (const child of node.children ?? []) walk(child, node.properties?.className?.join(' ') ?? cls);
-    };
-    walk(lowlight.highlight(language, code) as Hast);
-  }
-  spanCache.set(key, spans);
+        if (at === parts[part].to) at = parts[++part]?.from ?? at;
+      }
+    } else for (const child of node.children ?? []) walk(child, node.properties?.className?.join(' ') ?? cls);
+  };
+  walk(lowlight.highlight(language, parts.map(p => doc.sliceString(p.from, p.to)).join('')) as Hast);
+  spanCache.set(block, spans);
   return spans;
 }
 
 
-// The language a fenced code block names, kept at the left of the box's first row where the opening fence was.
 class CodeLangWidget extends WidgetType {
   constructor(readonly language: string) { super(); }
   toDOM() {
@@ -320,12 +303,10 @@ class CodeLangWidget extends WidgetType {
     return el;
   }
   eq(other: CodeLangWidget) { return other.language === this.language; }
-  ignoreEvent() { return true; }
 }
 
 const headingSize = /^ATXHeading([1-6])$/;
 
-// The lines a caret or selection rests on, which keep their raw syntax visible instead of rendering.
 const activeLines = (state: EditorState): Set<number> => {
   const doc = state.doc;
   const active = new Set<number>();
@@ -334,14 +315,11 @@ const activeLines = (state: EditorState): Set<number> => {
   }
   return active;
 };
-// Whether a caret or selection rests anywhere in a range, which keeps that range's raw syntax visible.
 const rangeRevealed = (active: Set<number>, doc: Text, from: number, to: number): boolean => {
   for (let l = doc.lineAt(from).number; l <= doc.lineAt(to).number; l += 1) if (active.has(l)) return true;
   return false;
 };
 
-// What the view draws: the markdown rendered inline, with the raw syntax of every line the caret or a selection rests on
-// left visible, the way a live preview lets the line being edited be edited as text.
 function render(state: EditorState, from: number, to: number): DecorationSet {
   const doc = state.doc;
   const loadImage = state.facet(previewImageSource)[0];
@@ -352,11 +330,22 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
   const mark = (from: number, to: number, cls: string) => {
     if (from < to) ranges.push({ from, to, value: Decoration.mark({ class: cls }) });
   };
+  // A ViewPlugin may replace inline text, but CodeMirror owns the line breaks for viewport layout.
+  const replace = (from: number, to: number, widget?: WidgetType) => {
+    while (from < to) {
+      const end = Math.min(doc.lineAt(from).to, to);
+      if (from < end) {
+        ranges.push({ from, to: end, value: Decoration.replace({ widget }) });
+        widget = undefined;
+      }
+      from = end + 1;
+    }
+  };
   // Markup is dimmed where it shows and taken away where it does not: the line being edited keeps it, the rest reads clean.
   const syntax = (from: number, to: number, widget?: WidgetType) => {
     if (from >= to) return;
     mark(from, to, 'cm-md-syntax');
-    if (!revealed(from, to)) ranges.push({ from, to, value: Decoration.replace({ widget }) });
+    if (!revealed(from, to)) replace(from, to, widget);
   };
   const line = (pos: number, cls: string) => ranges.push({ from: pos, to: pos, value: Decoration.line({ class: cls }) });
 
@@ -382,7 +371,7 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
       else ranges.push({ from: ln.from, to: ln.from, value: Decoration.line({ class: 'cm-md-frontmatter-hidden' }) });
     }
     const body = fmLast > 2 ? doc.sliceString(doc.line(2).from, doc.line(fmLast - 1).to) : '';
-    ranges.push({ from: fmTo, to: fmTo, value: Decoration.widget({ widget: new FrontmatterWidget(body, 1), side: 1 }) });
+    ranges.push({ from: fmTo, to: fmTo, value: Decoration.widget({ widget: new FrontmatterWidget(body), side: 1 }) });
   }
   syntaxTree(state).iterate({ from, to,
     enter(node) {
@@ -404,19 +393,20 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
         if (last.number > first.number) syntax(last.from, last.to);
         return false;
       }
-      if (name === 'StrongEmphasis' || name === 'Emphasis' || name === 'Strikethrough' || name === 'InlineCode' || name === 'Link') {
-        const m = inlineMark(node.node);
-        if (m) {
-          mark(m.from, m.to, m.cls);
-          if (name === 'Link') { syntax(m.start, m.from); syntax(m.to, m.end); }
-        }
-        return name === 'Link' ? false : undefined;
+      const inline = inlineMark(node.node);
+      if (inline) {
+        mark(inline.from, inline.to, inline.cls);
+        if (name === 'Link') { syntax(inline.start, inline.from); syntax(inline.to, inline.end); return false; }
+        return;
       }
       if (name === 'Image') {
-        const text = doc.sliceString(from, to);
-        const match = /^!\[([^\]]*)\]\(([^)\s]+)/.exec(text);
-        if (match && !revealed(from, to)) {
-          ranges.push({ from, to, value: Decoration.replace({ widget: new ImageWidget(match[1], match[2], loadImage) }) });
+        const url = node.node.getChild('URL');
+        if (url && !revealed(from, to)) {
+          const [open, close] = node.node.getChildren('LinkMark');
+          const alt = doc.sliceString(open.to, close.from);
+          const raw = doc.sliceString(url.from, url.to);
+          const destination = (raw.startsWith('<') ? raw.slice(1, -1) : raw).replace(/\\([!-/:-@\[-`{-~])/g, '$1');
+          replace(from, to, new ImageWidget(alt, destination, loadImage));
         }
         return false;
       }
@@ -438,16 +428,16 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
         if (revealed(from, to)) return false;
         const first = doc.lineAt(from).number;
         const last = doc.lineAt(to).number;
+        const closing = name === 'FencedCode' ? node.node.lastChild : null;
+        const closed = closing?.name === 'CodeMark' && closing.from !== node.node.firstChild?.from;
         const info = name === 'FencedCode' ? node.node.getChild('CodeInfo') : null;
         const language = info ? doc.sliceString(info.from, info.to).trim().split(/\s+/)[0] : '';
-        const text = name === 'FencedCode' ? node.node.getChild('CodeText') : null;
-        const codeFrom = text ? text.from : from;
-        const codeTo = text ? text.to : to;
-        const boxFrom = doc.lineAt(codeFrom).number;
-        const boxTo = doc.lineAt(codeTo).number;
+        const parts = node.node.getChildren('CodeText');
+        const boxFrom = name === 'FencedCode' ? first + 1 : first;
+        const boxTo = closed ? last - 1 : last;
         for (let l = first; l <= last; l += 1) {
           const ln = doc.line(l);
-          if (name === 'FencedCode' && (l === last || (l === first && !language))) { syntax(ln.from, ln.to); continue; }
+          if ((closed && l === last) || (name === 'FencedCode' && l === first && !language)) { syntax(ln.from, ln.to); continue; }
           let cls = 'cm-md-codeblock';
           if (l === first) cls += ' cm-md-codeblock-top' + (name === 'FencedCode' ? ' cm-md-codeblock-lang' : '');
           else if (l === boxFrom) cls += language ? ' cm-md-codeblock-start' : ' cm-md-codeblock-top';
@@ -455,7 +445,7 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
           line(ln.from, cls);
           if (name === 'FencedCode' && l === first) syntax(ln.from, ln.to, new CodeLangWidget(language));
         }
-        for (const span of codeSpans(language, doc.sliceString(codeFrom, codeTo))) ranges.push({ from: codeFrom + span.from, to: codeFrom + span.to, value: Decoration.mark({ class: span.cls }) });
+        for (const span of codeSpans(node.node, language, doc, parts)) mark(from + span.from, from + span.to, span.cls);
         return false;
       }
       if (name === 'Table') {
@@ -482,7 +472,7 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
         return false;
       }
       if (name === 'HorizontalRule') {
-        if (!revealed(from, to)) ranges.push({ from, to, value: Decoration.replace({ widget: new RuleWidget() }) });
+        if (!revealed(from, to)) replace(from, to, new RuleWidget());
         return false;
       }
       if (name === 'EmphasisMark' || name === 'CodeMark' || name === 'StrikethroughMark' || name === 'QuoteMark') {
@@ -500,19 +490,39 @@ function render(state: EditorState, from: number, to: number): DecorationSet {
   return Decoration.set(ranges, true);
 }
 
-// The live preview laid over a markdown buffer: it reads the same syntax tree the highlighting does, so it adds nothing
-// to parse, and it is swapped in and out by a compartment without rebuilding the view. Decorations are built only for the
-// viewport and a margin around it, so their cost stays flat as the file grows; a parse that merely extends the tree past
-// the range already drawn reuses the decorations instead of rebuilding them. The motion assist reads the drawn blocks
-// back out of the plugin to find a collapsed block's neighbourhood.
+// Render past the viewport edge so a small scroll can reuse the current decorations.
 const previewMargin = 1000;
 const previewRange = (view: EditorView) => {
   const { from, to } = view.viewport;
   return { from: Math.max(0, from - previewMargin), to: Math.min(view.state.doc.length, to + previewMargin) };
 };
-export const markdownPreview = ViewPlugin.fromClass(class {
+const previewDecorations = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
-  constructor(view: EditorView) { this.decorations = this.build(view); }
+  private moveVertically: EditorView['moveVertically'];
+  constructor(private view: EditorView) {
+    this.decorations = this.build(view);
+    this.moveVertically = view.moveVertically;
+    // Collapsed source rows have no height. Correct the geometric step here so Vim can still apply counts and operators.
+    view.moveVertically = (start, forward, distance) => {
+      const moved = this.moveVertically.call(view, start, forward, distance);
+      if (distance !== undefined) return moved;
+      const doc = view.state.doc;
+      const source = doc.lineAt(start.head);
+      const next = Math.max(1, Math.min(doc.lines, source.number + (forward ? 1 : -1)));
+      const landed = doc.lineAt(moved.head).number;
+      if (landed === next || (landed === source.number && moved.head !== start.head)) return moved;
+      let collapsed = false;
+      this.decorations.between(0, doc.length, (_from, to, value) => {
+        const widget = value.spec.widget;
+        if ((widget instanceof TableWidget || widget instanceof FrontmatterWidget)
+            && widget.first <= Math.max(source.number, next) && doc.lineAt(to).number >= Math.min(source.number, next)) collapsed = true;
+      });
+      if (!collapsed) return moved;
+      const row = doc.line(next);
+      return EditorSelection.cursor(Math.min(row.to, row.from + start.head - source.from), start.assoc, undefined, moved.goalColumn);
+    };
+  }
+  destroy() { this.view.moveVertically = this.moveVertically; }
   update(u: ViewUpdate) {
     const { to } = previewRange(u.view);
     const before = syntaxTree(u.startState);
@@ -546,7 +556,7 @@ const tableGutterMarks = (state: EditorState): RangeSet<GutterMarker> => {
   });
   return RangeSet.of(marks, true);
 };
-export const tableGutter = StateField.define<RangeSet<GutterMarker>>({
+const tableGutter = StateField.define<RangeSet<GutterMarker>>({
   create: tableGutterMarks,
   update: (value, tr) => (tr.docChanged || tr.selection || syntaxTree(tr.state) !== syntaxTree(tr.startState) ? tableGutterMarks(tr.state) : value),
   provide: (field) => gutterLineClass.from(field),
@@ -555,7 +565,7 @@ export const tableGutter = StateField.define<RangeSet<GutterMarker>>({
 // The idle parser only runs while it has focus, budget and no pending input, so a page can sit unrendered until a
 // click wakes it. Drive the parse here instead: whenever the viewport is not covered, parse forward a bounded slice
 // each frame until it is, so the visible lines render on their own, viewport first, without needing a click.
-export const markdownPreviewParse = ViewPlugin.fromClass(class {
+const markdownPreviewParse = ViewPlugin.fromClass(class {
   private frame = 0;
   private dead = false;
   constructor(private view: EditorView) { this.schedule(); }
@@ -573,42 +583,32 @@ export const markdownPreviewParse = ViewPlugin.fromClass(class {
   destroy() { this.dead = true; if (this.frame) cancelAnimationFrame(this.frame); }
 });
 
-// Collapsed table and frontmatter lines have no height for the view's vertical motion to land on, so within such a
-// block's neighbourhood j/k and the arrows step one source line at a time by hand; the line the caret lands on reveals
-// itself as text.
-function stepBlock(view: EditorView, dir: 1 | -1): boolean {
-  const { state } = view;
-  const line = state.doc.lineAt(state.selection.main.head).number;
-  const plugin = view.plugin(markdownPreview);
-  if (!plugin) return false;
-  let near = false;
-  plugin.decorations.between(0, state.doc.length, (from, to, value) => {
-    const widget = value.spec.widget;
-    if (widget instanceof TableWidget || widget instanceof FrontmatterWidget) {
-      const last = state.doc.lineAt(to).number;
-      if (line >= widget.first - 1 && line <= last + 1) near = true;
+const markdownPreviewKeys = keymap.of([
+  { key: 'ArrowDown', run: cursorLineDown, shift: selectLineDown },
+  { key: 'ArrowUp', run: cursorLineUp, shift: selectLineUp },
+]);
+
+export function markdownPreview(context: UiContext, file: FileClick) {
+  const images = new Map<string, Promise<string>>();
+  const base = directoryOf(file);
+  const loadImage = async (url: string) => {
+    const name = decodeURIComponent(url.split(/[?#]/)[0]);
+    const parts: string[] = [];
+    for (const part of (name.startsWith('/') ? name : `${base}/${name}`).split('/')) {
+      if (!part || part === '.') continue;
+      if (part === '..') parts.pop();
+      else parts.push(part);
     }
-  });
-  if (!near) return false;
-  const target = Math.min(Math.max(line + dir, 1), state.doc.lines);
-  view.dispatch({ selection: { anchor: state.doc.line(target).from }, scrollIntoView: true });
-  return true;
+    const path = `/${parts.join('/')}`;
+    let pending = images.get(path);
+    if (!pending) {
+      pending = context.ui.request<ImageBytes>('read-image', { machine: file.machine, path })
+        .then(({ mime, data }) => `data:${mime};base64,${data}`);
+      images.set(path, pending);
+      pending.catch(() => images.delete(path));
+    }
+    return pending;
+  };
+  return [previewDecorations, markdownPreviewKeys, markdownPreviewParse, tableGutter, EditorView.lineWrapping,
+    previewImageSource.of(loadImage), imageLayout.of([])];
 }
-
-const motionMode = (view: EditorView) => {
-  const vim = getCM(view)?.state?.vim;
-  return !!vim && !vim.insertMode;
-};
-
-export const markdownPreviewKeys = Prec.highest(EditorView.domEventHandlers({
-  keydown: (event, view) => {
-    const dir = event.key === 'ArrowDown' ? 1
-      : event.key === 'ArrowUp' ? -1
-      : event.key === 'j' && motionMode(view) ? 1
-      : event.key === 'k' && motionMode(view) ? -1 : 0;
-    if (!dir || !stepBlock(view, dir)) return false;
-    event.preventDefault();
-    return true;
-  },
-}));
-

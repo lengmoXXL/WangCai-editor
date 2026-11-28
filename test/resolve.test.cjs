@@ -10,11 +10,14 @@ test('address resolution uses the requested machine and directory, and releases 
   const dispose = activate({
     host: { dataDirectory: __dirname },
     ui: { handle(method, handler) { handlers.set(method, handler); return () => handlers.delete(method); } },
+    async request(plugin, method, params) {
+      assert.deepEqual([plugin, method, params], ['@workspace', 'cwd', { workspaceId: 'work' }]);
+      return '/work';
+    },
     async connect(target, signal) {
       assert.equal(target, machine);
       assert.ok(!signal.aborted);
       return {
-        pty: { async cwd(sessionId) { assert.equal(sessionId, 'session'); return '/work'; } },
         fs: { async stat(path) {
           paths.push(path);
           return path === '/work/missing' ? null : { isDirectory: path === '/work' };
@@ -31,7 +34,7 @@ test('address resolution uses the requested machine and directory, and releases 
       { type: 'file', machine, path: '/work/notes with spaces.md' });
     assert.deepEqual(await resolve({ machine, path: '..', base: '/work/src' }),
       { type: 'directory', machine, path: '/work' });
-    assert.deepEqual(await resolve({ machine, sessionId: 'session' }),
+    assert.deepEqual(await resolve({ machine, workspaceId: 'work' }),
       { type: 'directory', machine, path: '/work' });
     await assert.rejects(resolve({ machine, path: 'missing', base: '/work' }),
       (error) => error.message.includes('/work/missing'));

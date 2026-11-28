@@ -17,11 +17,11 @@ const uiOptions = {
 // The app loads what this writes: main.cjs runs in the main process, ui.js is the renderer entry and
 // ui.css sits next to it. Everything the runtime needs is bundled, so the app never needs this repository's
 // dependencies and never compiles a plugin itself.
-await esbuild.build({ ...mainOptions, absWorkingDir: source, entryPoints: ['main.ts'], outfile: join(source, 'main.cjs') });
+await esbuild.build({ ...mainOptions, absWorkingDir: source, entryPoints: ['main/index.ts'], outfile: join(source, 'main.cjs') });
 await esbuild.build({
   ...uiOptions, absWorkingDir: source, outdir: source,
-  entryPoints: ['ui.tsx'],
+  entryPoints: { ui: 'ui/index.tsx' },
   plugins: [{ name: 'node-sdk-boundary', setup(builder) {
-    builder.onResolve({ filter: /^@lengmoxxl\/sdk$/ }, () => ({ errors: [{ text: '@lengmoxxl/sdk is only available in main.ts' }] }));
+    builder.onResolve({ filter: /^@lengmoxxl\/sdk$/ }, () => ({ errors: [{ text: '@lengmoxxl/sdk is only available in the main process' }] }));
   } }],
 });

@@ -2,30 +2,32 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { EditorView } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import type { Theme } from '@lengmoxxl/sdk';
-import type { Font } from './shared';
+import type { UiContext } from '@lengmoxxl/sdk/channel';
+import type { Settings } from '../shared';
+import { languageOf } from './mode';
 
-// The editor drawn in the app's own colours: the shell around the text, and the colours the text is read in. Built again
-// on a switch of theme, so it reads the scheme the window has just settled on rather than the one it started with.
-export function editorTheme(theme: Theme, font: Font) {
+let currentTheme: Theme;
+export function trackTheme(context: UiContext) {
+  currentTheme = context.host.config.theme;
+  return context.global.subscribe<Theme>('theme', next => { currentTheme = next; });
+}
+
+export function editorTheme({ font, fontSizes }: Settings, path: string, theme = currentTheme) {
+  const size = fontSizes?.[languageOf(path) ?? ''] ?? font.size;
   const dark = getComputedStyle(document.documentElement).colorScheme !== 'light';
-  const lineHeight = font.lineHeight ? Math.round(font.size * font.lineHeight) : 0;
+  const lineHeight = font.lineHeight ? Math.round(size * font.lineHeight) : 0;
   const shell = EditorView.theme({
-    '&': { height: '100%', color: theme.foreground, backgroundColor: theme.background, fontSize: `${font.size}px` },
+    '&': { height: '100%', color: theme.foreground, backgroundColor: theme.background, fontSize: `${size}px` },
     '.cm-scroller': lineHeight ? { fontFamily: font.family, lineHeight: `${lineHeight}px` } : { fontFamily: font.family },
-    // Both selectors below are as long as they are because the vim package and the base theme reach these two elements
-    // with selectors of their own, some of them later in the sheet: a simpler one loses without saying so.
+    // These selectors must outrank the Vim and CodeMirror base themes.
     '&.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': { backgroundColor: theme.selection },
     '&.cm-editor.cm-focused .cm-fat-cursor': { backgroundColor: theme.cursor },
     '.cm-gutters': { backgroundColor: theme.background, color: theme.muted, border: 'none' },
-    // CodeMirror's own theme paints the line the caret is on, and that background paints over the marks of a selection,
-    // which is what hides a selection on the very line; a box below them does not. So the line's background is cleared and
-    // a box drawn instead.
+    // Paint below the selection layer so the active line cannot cover selected text.
     '.cm-activeLine': { position: 'relative', backgroundColor: 'transparent' },
-    // Layers below the text count down from -1 in the scroller's stacking context — the selection's is -2 — while the ones
-    // above it count down from 150, so -10 sits under the selection and still leaves room for the layers a plugin brings.
+    // CodeMirror places the selection layer at z-index -2.
     '.cm-activeLine::before': { content: '""', position: 'absolute', inset: '0', zIndex: '-10', backgroundColor: theme.overlay },
-    // A selection — visual mode always draws one — is the highlight the caret's line should carry alone; the line's own
-    // box would band across it, so the box stands down for as long as a selection is on screen.
+    // The selection already highlights the active line.
     '&:has(.cm-selectionBackground) .cm-activeLine::before': { backgroundColor: 'transparent' },
     '.cm-scroller::-webkit-scrollbar': { width: '10px', height: '10px' },
     '.cm-scroller::-webkit-scrollbar-thumb': { backgroundColor: theme.muted, borderRadius: '5px' },
@@ -43,7 +45,6 @@ export function editorTheme(theme: Theme, font: Font) {
     { tag: [tags.function(tags.variableName), tags.function(tags.propertyName), tags.macroName], color: theme.blue },
     { tag: [tags.constant(tags.variableName), tags.standard(tags.variableName), tags.self], color: theme.brightMagenta },
     { tag: tags.heading, color: theme.blue, fontWeight: '600' },
-    // Bold keeps the body colour (the preview strengthens it); only headings take the accent hue.
     { tag: tags.strong, fontWeight: '600' },
     { tag: tags.emphasis, fontStyle: 'italic' },
     { tag: [tags.link, tags.url], color: theme.cyan, textDecoration: 'underline' },

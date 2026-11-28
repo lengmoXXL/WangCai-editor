@@ -129,6 +129,11 @@ test('an unnamed fence hides its first row like the last', { timeout: 120000 }, 
   assert.equal(await md(page, 'cm-md-codeblock-lang').count(), 0);
   assert.equal(await md(page, 'cm-md-codeblock-top').innerText(), 'plain');
   assert.equal(await lineBoxes(shownPanel(page)).filter({ hasText: '```' }).count(), 0);
+  for (const language of ['js', '']) {
+    writeFileSync(file, `# T\n\n\`\`\`${language}\n\n\`\`\`\n\ntail`);
+    const row = md(page, language ? 'cm-md-codeblock-start' : 'cm-md-codeblock-top');
+    await until(async () => await row.evaluateAll(nodes => nodes.some(el => !el.textContent && el.classList.contains('cm-md-codeblock-bottom'))));
+  }
   assert.deepEqual(errors, []);
 }));
 
@@ -180,6 +185,11 @@ test('rendered code carries highlight spans over the box', { timeout: 120000 }, 
   const colour = await keyword.first().evaluate((el) => getComputedStyle(el).color);
   const plain = await md(page, 'cm-md-codeblock').first().evaluate((el) => getComputedStyle(el).color);
   assert.notEqual(colour, plain);
+  writeFileSync(file, '# T\n\n```ts\nconst answer = 42;');
+  await md(page, 'cm-md-codeblock').filter({ hasText: 'const answer = 42;' }).waitFor();
+  writeFileSync(file, '# T\n\n> ```js\n> const a = 1;\n> const b = 2;\n> const c = 3;\n> ```');
+  await md(page, 'cm-md-codeblock-bottom').filter({ hasText: 'const c = 3;' }).waitFor();
+  assert.deepEqual(await keyword.allTextContents(), ['const', 'const', 'const']);
   assert.deepEqual(errors, []);
 }));
 
@@ -283,6 +293,33 @@ test('entering the table shows full source and hides the grid; leaving restores 
   for (let i = 0; i < 4; i++) await page.keyboard.press('j');
   await until(async () => (await activeLineNo(page)) === 6);
   await until(async () => (await md(page, 'cm-md-table').count()) === 1);
+  await page.keyboard.type('2k');
+  await until(async () => (await activeLineNo(page)) === 4);
+  await page.keyboard.type('2k');
+  await until(async () => (await activeLineNo(page)) === 2);
+  await page.keyboard.type('Vj');
+  await page.keyboard.press('d');
+  await until(async () => !(await drawnLines(page)).some(line => line.includes('| a | b |')));
+  await page.keyboard.type('u');
+  await until(async () => (await md(page, 'cm-md-table').count()) === 1);
+  await lineBoxes(shownPanel(page)).nth(1).click();
+  await page.keyboard.type('dj');
+  await until(async () => (await drawnLines(page))[1] === '| --- | --- |');
+  assert.deepEqual(errors, []);
+}));
+
+test('display-line movement stays on a wrapped heading above a collapsed table', { timeout: 120000 }, () => withWindow('wangcai-editor-wrapped-motion', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'wrapped.md');
+  const heading = '# ' + 'long heading '.repeat(24);
+  await showWritten(page, file, `${heading}\n| a | b |\n| --- | --- |\n| x | y |\n`, 'long heading');
+  await md(page, 'cm-md-table').waitFor();
+  await codeContent(shownPanel(page)).focus();
+  await page.keyboard.type('gg0gj');
+  const cursor = await page.evaluate(() => window.wangcai.call('request', 'editor', 'cursor'));
+  assert.equal(cursor.line, 1);
+  assert.ok(cursor.column > 1);
+  await page.keyboard.press('j');
+  await until(async () => (await activeLineNo(page)) === 2);
   assert.deepEqual(errors, []);
 }));
 
@@ -431,25 +468,45 @@ const loadedPicture = (page) => shownPanel(page).locator('.cm-md-image img').fir
 
 test('a local image renders as a loaded picture, and a missing one keeps its card', { timeout: 120000 }, () => withWindow('wangcai-editor-preview-image', lists, async ({ home, page, errors }) => {
   writeFileSync(join(home, 'pic.png'), pngOf(24, 16, [214, 66, 112]));
+  writeFileSync(join(home, 'my image.png'), pngOf(8, 8, [2, 4, 8]));
+  writeFileSync(join(home, 'chart(1).png'), pngOf(8, 8, [2, 4, 8]));
+  writeFileSync(join(home, 'pic.constructor'), 'plain text');
   const file = join(home, 'image.md');
-  await showWritten(page, file, '# Pic\n\n![a picture](./pic.png)\n\n![gone](./missing.png)\n\n![bad](./100%.png)\n\ntail\n', 'tail');
+  await showWritten(page, file, '# Pic\n\n![a picture](./pic.png)\n\n![space](<my image.png>)\n\n![chart](chart(1).png "Chart")\n\n![gone](./missing.png)\n\n![bad](./100%.png)\n\n![unknown](./pic.constructor)\n\ntail\n', 'tail');
   // The present image's bytes come through the channel and draw; the missing and the malformed keep the named card.
   await until(async () => (await shownPanel(page).locator('.cm-md-image img').count()) > 0 && loadedPicture(page), { timeout: 30000 });
-  await until(async () => (await md(page, 'cm-md-image-missing').count()) === 2, { timeout: 30000 });
-  // The tall picture must not leave the line-number gutter drifted from the content below it.
-  const drift = await page.evaluate(() => {
-    const tops = new Map([...document.querySelectorAll('.cm-gutterElement')].map((el) => [el.textContent.trim(), el.getBoundingClientRect().top]));
-    let max = 0;
-    document.querySelectorAll('.cm-content .cm-line').forEach((el, i) => {
+  for (const alt of ['space', 'chart']) await until(() => shownPanel(page).getByRole('img', { name: alt, exact: true }).evaluate(el => el.naturalWidth === 8));
+  await until(async () => (await md(page, 'cm-md-image-missing').count()) === 3, { timeout: 30000 });
+  // The image load schedules a CodeMirror measurement on the next animation frame.
+  await until(() => shownPanel(page).locator('.cm-editor').evaluate(editor => {
+    const tops = new Map([...editor.querySelectorAll('.cm-lineNumbers .cm-gutterElement')].map(el => [el.textContent.trim(), el.getBoundingClientRect().top]));
+    return [...editor.querySelectorAll('.cm-content .cm-line')].every((el, i) => {
       const top = tops.get(String(i + 1));
-      if (top !== undefined) max = Math.max(max, Math.abs(top - el.getBoundingClientRect().top));
+      return top !== undefined && Math.abs(top - el.getBoundingClientRect().top) < 3;
     });
-    return max;
-  });
-  assert.ok(drift < 3, `gutter drifted ${drift}px from the content`);
+  }));
   // The caret onto the picture's line brings its markdown back as text.
   await lineBoxes(shownPanel(page)).nth(2).click();
   await until(async () => (await drawnLines(page))[2] === '![a picture](./pic.png)');
+  assert.deepEqual(errors, []);
+}));
+
+test('a multiline image renders once and reveals its full source while editing either line', () => withWindow('wangcai-editor-multiline-image', lists, async ({ home, page, errors }) => {
+  writeFileSync(join(home, 'photo.png'), pngOf(8, 8, [2, 4, 8]));
+  const first = 'before ![Photo](', second = 'photo.png) after';
+  await showWritten(page, join(home, 'image.md'), ['# Start', '', first, second, '', 'end'].join('\n'), 'Start');
+  const panel = shownPanel(page), picture = panel.getByRole('img', { name: 'Photo', exact: true });
+  for (const row of [2, 3]) {
+    await picture.waitFor({ timeout: 5000 });
+    assert.equal(await picture.count(), 1);
+    await until(() => picture.evaluate(el => el.naturalWidth === 8));
+    assert.deepEqual((await drawnLines(page)).slice(2, 4), ['before ', ' after']);
+    await lineBoxes(panel).nth(row).click();
+    await until(async () => (await picture.count()) === 0);
+    assert.deepEqual((await drawnLines(page)).slice(2, 4), [first, second]);
+    await lineBoxes(panel).first().click();
+  }
+  await picture.waitFor();
   assert.deepEqual(errors, []);
 }));
 

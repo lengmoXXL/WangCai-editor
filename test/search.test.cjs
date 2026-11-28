@@ -2,10 +2,95 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { mkdirSync, writeFileSync } = require('node:fs');
 const { basename, join } = require('node:path');
+const { buildSync } = require('esbuild');
 const { clickFile, codeShowing, dismissSearch, editorFocused, fileSearchEmpty, landedOn, lists, machine, openSearch, queryApplied, search, searchInput, searchMarks, searchPanel, searchRow, searchRowEntries, searchRows, shownPanel, shows, showWritten, storedHistory, submitSearch, waitForPath } = require('./editor-ui.cjs');
-const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
+const { until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
+const { activate } = require('../main.cjs');
 
 const rowLimit = 200;
+
+test('grep keeps the matched snapshot when a file changes or disappears after rg returns', async () => {
+  const handlers = new Map();
+  const paths = ['same.md', 'removed.md', 'replaced.md', 'moved.md'];
+  const records = paths.map(path => JSON.stringify({ type: 'match', data: {
+    path: { text: path }, lines: { text: 'aaa dog here\n' }, line_number: 2, submatches: [{ start: 4, end: 7 }],
+  } })).join('\n');
+  const dispose = activate({
+    host: { dataDirectory: __dirname },
+    ui: { handle(name, fn) { handlers.set(name, fn); return () => handlers.delete(name); } },
+    async connect() { return {
+      disconnect() {},
+      subprocess: { async exec(program, args) {
+        if (program === '/bin/sh' && args[1].includes('RIPGREP_CONFIG_PATH')) throw new Error('machine disconnected');
+        if (program === 'mktemp') return { code: 0, stdout: Buffer.from('/tmp/search-output\n') };
+        return { code: 0, stdout: Buffer.from(args.includes('/bin/rg') ? records : '/bin\0/bin/rg\n') };
+      } },
+      fs: { async readFile(path) {
+        if (path.endsWith('removed.md')) throw new Error('file removed');
+        const line = path.endsWith('replaced.md') ? 'abc cat here' : path.endsWith('moved.md') ? 'other dog line' : 'aaa dog here';
+        return Buffer.from(`first\rnext\n${line}\n`);
+      } },
+    }; },
+  });
+  try {
+    for (const args of [[], ['-E', 'none'], ['-E', 'latin1']]) {
+      const hits = await handlers.get('grep')({ machine, path: '/work', query: 'dog', args });
+      assert.deepEqual(hits, paths.map(path => ({
+        path: `/work/${path}`, line: path === 'same.md' ? 3 : 2, column: 5, text: 'aaa dog here',
+      })));
+    }
+  } finally { await dispose(); }
+});
+
+test('grep returns its first 500 hits when rg writes more than 8 MiB', () => withWindow('wangcai-editor-large-grep', lists, async ({ home, page }) => {
+  const path = join(home, 'corpus');
+  mkdirSync(path);
+  const context = 'x'.repeat(18000);
+  for (let i = 0; i < 60; i++) {
+    const name = String(i).padStart(2, '0') + '.txt';
+    writeFileSync(join(path, name), Array.from({ length: 10 }, (_, row) => `target ${row}\n${context}\n`).join(''));
+  }
+  const hits = await page.evaluate(query => window.wangcai.call('request', 'editor', 'grep', query),
+    { machine, path, query: 'target', args: ['--sort', 'path', '-A1'] });
+  assert.equal(hits.length, 500);
+  assert.deepEqual(hits[0], { path: join(path, '00.txt'), line: 1, column: 1, text: 'target 0' });
+  assert.deepEqual(hits.at(-1), { path: join(path, '49.txt'), line: 19, column: 1, text: 'target 9' });
+}));
+
+test('search uses the machine’s rg encoding and only lists terminated filenames', () => withHome('wangcai-editor-rg-config', lists, async ({ home, env, open }) => {
+  env.RIPGREP_CONFIG_PATH = join(home, 'rg.conf');
+  writeFileSync(env.RIPGREP_CONFIG_PATH, '--encoding=none\n');
+  const { page } = await open();
+  const file = join(home, 'signature.txt');
+  await showWritten(page, file, '\uFEFFx\rnext\nlast', 'x');
+  for (const [query, args, coordinates] of [['^\uFEFFx', [], [[1, 1]]], ['x', [], [[1, 1], [2, 3]]], ['last', ['-N'], [[3, 1]]]]) {
+    const hits = await page.evaluate(payload => window.wangcai.call('request', 'editor', 'grep', payload), {
+      machine, path: home, query, args: [...args, '--', file],
+    });
+    assert.deepEqual(hits.map(hit => [hit.line, hit.column]), coordinates);
+  }
+  for (const args of [['--version'], ['--type-list'], ['--count', '--null-data', '-H', 'next', file]]) {
+    const paths = await page.evaluate(payload => window.wangcai.call('request', 'editor', 'find-files', payload), { machine, path: home, args });
+    assert.deepEqual(paths, []);
+  }
+  const directory = join(home, 'nested'), name = 'source.txt';
+  mkdirSync(directory);
+  const source = '中文🐈 CodeMirror 猫';
+  writeFileSync(join(directory, name), source);
+  for (const encoding of ['latin1', 'shift_jis', 'big5', 'euc-kr']) {
+    writeFileSync(env.RIPGREP_CONFIG_PATH, `--encoding=${encoding}\n`);
+    for (const args of [[], ['-E', encoding]]) {
+      const hits = await page.evaluate(payload => window.wangcai.call('request', 'editor', 'grep', payload), {
+        machine, path: home, query: 'CodeMirror', args: [...args, '--path-separator', '@', '--', `nested/${name}`],
+      });
+      assert.deepEqual(hits, [{ path: join(directory, name), line: 1, column: source.indexOf('CodeMirror') + 1, text: source }]);
+    }
+  }
+  const paths = await page.evaluate(payload => window.wangcai.call('request', 'editor', 'find-files', payload), {
+    machine, path: home, args: ['--color', 'always', '--path-separator', '@', '--', `nested/${name}`],
+  });
+  assert.deepEqual(paths, [join(directory, name)]);
+}));
 
 test('the search box finds files and text, and Enter opens what it found', { timeout: 120000 }, () => withWindow('wangcai-editor-search', lists, async ({ home, page, errors }) => {
   const main = join(home, 'main.ts');
@@ -98,6 +183,31 @@ test('the search box finds files and text, and Enter opens what it found', { tim
   await searchInput(page).fill('nst');
   await fileSearchEmpty(page).waitFor();
   await dismissSearch(page);
+  await clickFile(page, { type: 'file', machine: { ...machine, id: 'external-local' }, path: nested });
+  await waitForPath(shownPanel(page), nested);
+  await search(page, `>${grepToken}`);
+  await searchRow(page, `${basename(main)}:${grepRow}`).click();
+  await landedOn(page, main, grepLine);
+  const cursor = await page.evaluate(() => window.wangcai.call('request', 'editor', 'cursor'));
+  assert.deepEqual(cursor.machine, machine);
+  await clickFile(page, { type: 'file', machine: { ...machine, id: 'external-local' }, path: onlyFile });
+  await waitForPath(shownPanel(page), onlyFile);
+  await search(page, basename(main));
+  await mainRow.waitFor();
+  await page.clock.install();
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  await page.evaluate(() => window.wangcai.call('publish', 'workspace:active', null));
+  await page.clock.runFor(20);
+  await mainRow.waitFor({ state: 'detached' });
+  assert.equal(await searchInput(page).inputValue(), basename(main));
+  await page.clock.resume();
+  await searchInput(page).fill(`${basename(main)} -- -- '${main}'`);
+  const [workspaceId] = Object.keys(await storedHistory(page));
+  await page.evaluate(active => window.wangcai.call('publish', 'workspace:active', active), { workspaceId, machine, path: '/', base: '/' });
+  await until(async () => await mainRow.innerText() === main.slice(1));
+  await searchInput(page).fill(`>${grepToken} -- -- '${main}'`);
+  const detail = searchRow(page, `${basename(main)}:${grepRow}`).locator('.search-detail');
+  await until(async () => await detail.innerText() === `${main.slice(1)}:${grepRow}`);
   assert.deepEqual(errors, []);
 }));
 
@@ -123,6 +233,53 @@ test('rows that score the same keep the order the list came in', { timeout: 1200
   assert.deepEqual(await dupRowTexts(), listOrder);
   await dismissSearch(page);
   assert.deepEqual(errors, []);
+}));
+
+test('receiving the same search scope keeps the current results after the debounce', () => withWindow('wangcai-editor-search-scope', lists, async ({ page }) => {
+  await page.setContent('<main></main>');
+  const { outputFiles } = buildSync({ stdin: { resolveDir: join(__dirname, '..'), loader: 'tsx', contents: `
+    import { createRoot } from 'react-dom/client';
+    import { flushSync } from 'react-dom';
+    import { Search } from './ui/search';
+    const root = createRoot(document.querySelector('main'));
+    const machine = { id: 'local' };
+    const visited = { type: 'file', machine, path: '/work/one/dup.ts' };
+    window.searchCalls = [];
+    window.previews = [];
+    const context = { ui: { async request(method) {
+      window.searchCalls.push(method);
+      if (method === 'grep') return [3, 8].map(line => ({ path: '/work/two/dup.ts', line, column: 2, text: 'dup' }));
+      const files = ['/work/one/dup.ts', '/work/two/dup.ts'];
+      return window.searchCalls.length === 1 ? files : files.reverse();
+    } } };
+    const noop = () => {};
+    const peek = file => window.previews.push([file.path, file.line, file.column]);
+    window.activateScope = () => flushSync(() => root.render(<Search context={context} visited={visited}
+      workspace={{ type: 'directory', machine: { ...machine }, path: '/work' }} visitedReady peek={peek} navigate={noop} close={noop} />));
+  ` }, bundle: true, write: false, jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
+  await page.evaluate(outputFiles[0].text);
+  await page.clock.install();
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  await page.evaluate(() => window.activateScope());
+  await page.clock.runFor(200);
+  await searchInput(page).fill('dup');
+  await queryApplied(page);
+  await page.clock.runFor(150);
+  const first = ['/work/one/dup.ts', undefined, undefined];
+  assert.deepEqual(await page.evaluate(() => window.previews), [first]);
+  await page.evaluate(() => window.activateScope());
+  await page.clock.runFor(300);
+  assert.deepEqual(await page.evaluate(() => window.searchCalls), ['find-files']);
+  assert.deepEqual(await page.evaluate(() => window.previews), [first]);
+  assert.deepEqual((await searchRowEntries(page)).map(row => row.text), ['one/dup.ts', 'two/dup.ts']);
+  await searchInput(page).fill('>dup');
+  await page.clock.runFor(350);
+  await page.evaluate(() => window.activateScope());
+  await page.clock.runFor(300);
+  assert.deepEqual(await page.evaluate(() => window.searchCalls), ['find-files', 'grep']);
+  await searchInput(page).press('ArrowDown');
+  await page.clock.runFor(150);
+  assert.deepEqual(await page.evaluate(() => window.previews), [first, ['/work/two/dup.ts', 3, 2], ['/work/two/dup.ts', 8, 2]]);
 }));
 
 test('a query matching more rows than the picker shows brings them all to the cap', { timeout: 180000 }, () => withWindow('wangcai-editor-search-cap', lists, async ({ home, page, errors }) => {
@@ -195,6 +352,10 @@ test('the flags after the separator are handed to rg', { timeout: 120000 }, () =
   const droppedRow = searchRow(page, 'dropped.md');
   await droppedRow.waitFor();
   assert.equal(await searchRow(page, 'kept.ts').count(), 0);
+  await searchInput(page).fill('-- -g no-such-file');
+  await fileSearchEmpty(page).waitFor();
+  await searchInput(page).fill('-- -- kept.ts');
+  await keptRow.waitFor();
   await dismissSearch(page);
   assert.deepEqual(errors, []);
 }));
@@ -204,6 +365,9 @@ test('the flags after the separator narrow what a content search greps', { timeo
   const hitLine = `const ${token} = 1;`;
   const one = join(home, 'one.ts');
   const two = join(home, 'two.md');
+  const bin = join(home, '.local', 'bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'editor-test-preprocessor'), '#!/bin/sh\ncat "$1"\n', { mode: 0o755 });
   writeFileSync(two, `${hitLine}\n`);
   await showWritten(page, one, `${hitLine}\n`, hitLine);
   // A pattern without flags finds the line in both files.
@@ -220,6 +384,86 @@ test('the flags after the separator narrow what a content search greps', { timeo
   await searchRow(page, `${basename(two)}:1`).waitFor();
   assert.equal(await searchRow(page, `${basename(one)}:1`).count(), 0);
   await dismissSearch(page);
+  await search(page, `>${token} -- --pre editor-test-preprocessor -g '*.md'`);
+  await searchRow(page, `${basename(two)}:1`).waitFor();
+  await dismissSearch(page);
+  const docs = join(home, 'my docs'), mixed = join(docs, 'mixed.md');
+  mkdirSync(docs);
+  writeFileSync(mixed, `\uFEFF无\r匹配\r\n另\n🐈 ${token}\rsecond ${token}\r\n`);
+  await search(page, `>${token} -- -N -E none -g 'my docs/*.md'`);
+  await searchRow(page, 'mixed.md:4').waitFor();
+  await searchRow(page, 'mixed.md:5').waitFor();
+  assert.equal(await searchRow(page, 'two.md').count(), 0);
+  await searchRow(page, 'mixed.md:4').click();
+  await landedOn(page, mixed, `🐈 ${token}`);
+  const cursor = await page.evaluate(() => window.wangcai.call('request', 'editor', 'cursor'));
+  assert.deepEqual([cursor.line, cursor.column], [4, 4]);
+  const encodingLike = join(docs, 'Enone');
+  writeFileSync(encodingLike, '\uFEFFa\nx\nx\n');
+  await search(page, '>x -- -NgEnone');
+  await searchRow(page, 'Enone:3').waitFor();
+  await dismissSearch(page);
+  await search(page, '>a -- -E none -g Enone');
+  await searchRow(page, 'Enone:1').click();
+  await landedOn(page, encodingLike, 'a');
+  const first = await page.evaluate(() => window.wangcai.call('request', 'editor', 'cursor'));
+  assert.deepEqual([first.line, first.column], [1, 1]);
+  await openSearch(page);
+  await searchInput(page).fill(`>${token} -- -l -- '${one}'`);
+  await searchPanel(page).getByText('没有匹配的内容', { exact: true }).waitFor();
+  const events = join(home, 'events.txt');
+  const data = { path: { text: 'other.txt' }, lines: { text: token } };
+  writeFileSync(events, [data, { ...data, line_number: 1, absolute_offset: 0, submatches: [{ start: 0 }] }]
+    .map(data => JSON.stringify({ type: 'match', data })).join('\n'));
+  for (const [flags, lines] of [[['--no-json', '--no-filename', '--no-line-number'], []], [['-l', '--json'], [1, 2]]]) {
+    const hits = await page.evaluate(payload => window.wangcai.call('request', 'editor', 'grep', payload), {
+      machine, path: home, query: token, args: [...flags, '--', events],
+    });
+    assert.deepEqual(hits.map(hit => [hit.path, hit.line]), lines.map(line => [events, line]));
+  }
+  assert.deepEqual(errors, []);
+}));
+
+test('accepting a file by Enter or click keeps the cursor and scroll reached in its preview', () => withWindow('wangcai-editor-search-accept', lists, async ({ home, page, errors }) => {
+  const start = join(home, 'start.txt'), long = join(home, 'long-preview.txt');
+  writeFileSync(long, Array.from({ length: 200 }, (_, row) => `text on row ${row + 1}`).join('\n'));
+  await showWritten(page, start, 'start', 'start');
+  const panel = shownPanel(page), scroller = panel.locator('.cm-scroller');
+  for (const [action, top] of [['Enter', 800], ['click', 0]]) {
+    await search(page, basename(long));
+    await waitForPath(panel, long);
+    await panel.locator('.cm-content').focus();
+    await page.keyboard.type('80Gl');
+    await until(async () => {
+      const cursor = await page.evaluate(() => window.wangcai.call('request', 'editor', 'cursor'));
+      return cursor?.line === 80 && cursor.column === 2;
+    });
+    await searchInput(page).click();
+    await until(() => scroller.evaluate(element => element.scrollTop > 0));
+    await scroller.evaluate(async (element, top) => {
+      element.scrollTop = top;
+      await new Promise(requestAnimationFrame);
+    }, top);
+    if (action === 'Enter') await searchInput(page).press('Enter');
+    else await searchRow(page, basename(long)).click();
+    await searchPanel(page).waitFor({ state: 'detached' });
+    let entry;
+    await until(async () => {
+      const [history] = Object.values(await storedHistory(page));
+      entry = history.entries[history.index];
+      return entry.path === long;
+    });
+    assert.deepEqual([entry.line, entry.column, entry.top], [80, 2, top]);
+    assert.equal(await scroller.evaluate(element => element.scrollTop), top);
+    await page.keyboard.press('Control+o');
+    await waitForPath(panel, start);
+    await page.keyboard.press('Control+i');
+    await waitForPath(panel, long);
+    await until(() => editorFocused(page));
+    await until(() => scroller.evaluate((element, top) => element.scrollTop === top, top));
+    await page.keyboard.press('Control+o');
+    await waitForPath(panel, start);
+  }
   assert.deepEqual(errors, []);
 }));
 

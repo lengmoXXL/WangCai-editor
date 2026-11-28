@@ -14,10 +14,8 @@ import { StreamLanguage } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 import type { Extension } from '@codemirror/state';
 
-// A language a file can be read as: what the text is highlighted with, and the id a language server is told it is in.
 type Language = { id: string; mode: () => Extension };
 
-// A language several extensions are read as, written once and shared by the table below.
 const ts: Language = { id: 'typescript', mode: () => javascript({ typescript: true }) };
 const js: Language = { id: 'javascript', mode: javascript };
 const sh: Language = { id: 'shell', mode: () => StreamLanguage.define(shell) };
@@ -50,8 +48,7 @@ const yaml: Language = { id: 'yaml', mode: yamlLang };
 const c: Language = { id: 'c', mode: cppLang };
 const cpp: Language = { id: 'cpp', mode: cppLang };
 
-// What a file is read as, by the extension it carries or by its whole name when it has none.
-const modes: Record<string, Language> = {
+const modes = new Map(Object.entries<Language>({
   ts, mts: ts, cts: ts,
   js, mjs: js, cjs: js,
   tsx: { id: 'typescriptreact', mode: () => javascript({ typescript: true, jsx: true }) },
@@ -63,16 +60,12 @@ const modes: Record<string, Language> = {
   go: { id: 'go', mode: go }, yaml, yml: yaml,
   sh, bash: sh, zsh: sh,
   '.bashrc': sh, '.zshrc': sh, '.profile': sh,
-};
+}));
 
-// The entry a path is read by: its whole name first, since a dotfile has no extension to speak of, and then its
-// lower-cased extension.
 const entryFor = (path: string) => {
   const name = path.slice(path.lastIndexOf('/') + 1);
-  return modes[name] ?? modes[name.slice(name.lastIndexOf('.') + 1).toLowerCase()];
+  return modes.get(name) ?? modes.get(name.slice(name.lastIndexOf('.') + 1).toLowerCase());
 };
 
-// The highlighting of a file, and the language id a server is told it is in: a file this plugin does not read as a
-// language is shown as plain text and gets neither.
 export const modeFor = (path: string): Extension => entryFor(path)?.mode() ?? [];
 export const languageOf = (path: string) => entryFor(path)?.id;

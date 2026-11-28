@@ -1,13 +1,29 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { chmodSync, mkdirSync, writeFileSync } = require('node:fs');
+const { chmodSync, mkdirSync, symlinkSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { lspDot, noServerReason, shownPanel } = require('./editor-ui.cjs');
+const { lspDot, noServerReason, openEditorWorkspace, showFile, shownPanel } = require('./editor-ui.cjs');
 const { withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { openRust, serverFor, unexpected } = require('./lsp-fixtures.cjs');
 
-// The program this case installs after the window has already looked for it, in the directory a login shell puts first:
-// what the window remembers about a program it did not find is what the second try has to ask again.
+test('a relative server command is found in its own project root from a nested file', () => withWindow('wangcai-editor-relative-server',
+  serverFor('rust', ['./language-server', join(__dirname, 'symbols-server.cjs'), '[]']), async ({ home, page, errors }) => {
+    const withServer = join(home, 'with-server'), withoutServer = join(home, 'without-server');
+    const body = 'fn main() {}';
+    for (const root of [withServer, withoutServer]) {
+      mkdirSync(join(root, 'src'), { recursive: true });
+      writeFileSync(join(root, 'Cargo.toml'), '');
+      writeFileSync(join(root, 'src', 'main.rs'), body);
+    }
+    symlinkSync(process.execPath, join(withServer, 'language-server'));
+    await openEditorWorkspace(page);
+    await showFile(shownPanel(page), join(withServer, 'src', 'main.rs'), body);
+    await lspDot(shownPanel(page), 'open').waitFor();
+    await showFile(shownPanel(page), join(withoutServer, 'src', 'main.rs'), body);
+    assert.match(await noServerReason(page), /未找到/);
+    assert.deepEqual(unexpected(errors), []);
+  }));
+
 const lateProgram = 'wangcai-late-server';
 
 test('a server installed after the window looked for it is found by the next try', { timeout: 180000 }, () => withWindow('wangcai-editor-installed-later', serverFor('rust', [lateProgram]), async ({ home, page, errors }) => {

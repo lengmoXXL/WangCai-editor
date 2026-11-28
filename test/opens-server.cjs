@@ -12,7 +12,15 @@ const send = (body) => {
 };
 const handle = (message) => {
   if (message.method === 'initialize') send({ id: message.id, result: { capabilities: {} } });
-  else if (message.method === 'textDocument/didOpen') send({ method: 'window/showMessage', params: { type: 3, message: basename(message.params.textDocument.uri) } });
+  else if (message.method === 'textDocument/didOpen') {
+    const { uri, version, text } = message.params.textDocument;
+    const line = text.trimEnd().split('\n').length - 1;
+    send({ method: 'window/showMessage', params: { type: 3, message: basename(uri) } });
+    send({ method: 'textDocument/publishDiagnostics', params: { uri, version, diagnostics: [{
+      range: { start: { line, character: 0 }, end: { line, character: 3 } }, severity: 2, message: 'shared diagnostic',
+    }] } });
+    send({ method: 'textDocument/publishDiagnostics', params: { uri, version: version - 1, diagnostics: [] } });
+  }
   else if (message.id !== undefined) send({ id: message.id, result: null });
 };
 

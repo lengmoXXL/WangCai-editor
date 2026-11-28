@@ -1,7 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
+const { mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { lists, showWritten, shownPanel, codeContent, dirtyMark, typeInto } = require('./editor-ui.cjs');
+const { clickFile, lists, machine, showWritten, shownPanel, codeContent, dirtyMark, typeInto } = require('./editor-ui.cjs');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 // What the text is actually painted in, read off the view that is on screen rather than from the theme it was handed.
@@ -31,8 +33,7 @@ const switchTo = async (page, name) => {
 test('a switch of theme recolours the view already on screen', { timeout: 180000 }, () => withWindow('wangcai-editor-theme', lists, async ({ home, page, errors }) => {
   const file = join(home, 'colours.ts');
   await showWritten(page, file, 'const answer = 42;\nexport default answer;\n', 'const answer');
-  // An edit the disk does not have: a view built again would read the file and lose it, so this is what tells a
-  // re-coloured view from a rebuilt one.
+  const original = await codeContent(shownPanel(page)).elementHandle();
   await typeInto(page, 'UNSAVED');
   const dark = await painted(page);
   assert.equal(dark.scheme, 'dark');
@@ -45,8 +46,20 @@ test('a switch of theme recolours the view already on screen', { timeout: 180000
   assert.notEqual(light.gutter, dark.gutter, 'the gutter follows too');
   assert.notEqual(light.first, dark.first, 'the syntax colours were rebuilt, not left at the old theme');
 
-  assert.match(await codeContent(shownPanel(page)).innerText(), /UNSAVED/, 'the unsaved edit survived, so the view was re-coloured rather than built again');
-  await dirtyMark(shownPanel(page)).waitFor();
+  assert.ok(await original.evaluate(element => element.isConnected), 'the same editor survives the theme change');
+  assert.match(await original.innerText(), /UNSAVED/);
+  assert.ok(await dirtyMark(shownPanel(page)).isVisible() || readFileSync(file, 'utf8').includes('UNSAVED'), 'an edit stays marked until autosave writes it');
+
+  const repo = join(home, 'repo'), added = join(repo, 'added.ts');
+  mkdirSync(repo);
+  execFileSync('git', ['-C', repo, 'init', '-q']);
+  writeFileSync(added, 'const added = true;\n');
+  await clickFile(page, { type: 'file', machine, path: `git://${added}@:empty~:worktree` });
+  const comparison = page.locator('.git-editor .cm-content').filter({ hasText: 'const added' });
+  await comparison.waitFor();
+  assert.equal(await comparison.evaluate(el => getComputedStyle(el).color), light.text);
+  await clickFile(page, { type: 'file', machine, path: file });
+  await codeContent(shownPanel(page)).filter({ hasText: 'UNSAVED' }).waitFor();
 
   await switchTo(page, 'WangCai');
   await until(async () => (await painted(page)).scheme === 'dark');

@@ -5,11 +5,8 @@ const { join } = require('node:path');
 const { activeLineBox, alert, backButton, clickFile, codeContent, collectErrors, createWorkspace, cursorAt, drawnCloseButtons, drawnLines, editorFocused, editorPanels, editorPlugin, editorTab, editorView, filesColumn, filesPlugin, forwardButton, goToPath, landedOn, lineBoxes, lineShown, lists, machine, openDirectoryButton, openEditorWorkspace, openWorkspaces, refreshButton, selectionClass, selectionMarks, showAfter, showFile, shownPanel, shows, showWritten, storedHistory, viewMenu, waitForPath, workspaceTabs } = require('./editor-ui.cjs');
 const { until, withHome, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
-// An opening line for the pages of the cases that do not turn on which line comes first.
 const firstLine = 'const first = 1;';
-// How a case asks for a file to be opened: the payload the page takes for one visit.
 const visitTo = (path) => ({ type: 'file', machine, path });
-// A visit published from a link, waited for by a line of the file it opens.
 const openVisit = async (page, visit, line) => {
   await clickFile(page, visit);
   await lineShown(page, line);
@@ -54,7 +51,7 @@ test('the header hands the directory the shown file sits in to the files view', 
   const file = join(directory, listedName);
   await showWritten(page, file, '');
   await openDirectoryButton(page).click();
-  await filesColumn(page, directory).getByRole('button', { name: listedName, exact: true }).waitFor();
+  await filesColumn(page, directory).getByText(listedName, { exact: true }).waitFor();
   assert.deepEqual(errors, []);
 }));
 
@@ -79,9 +76,14 @@ test('the leader keys hand the file on show to the preview, and its directory to
   assert.deepEqual(await page.evaluate(() => window.previews), [file]);
   // The same leader, then `gf`: files opens the directory the file sits in.
   for (const key of [leader, 'g', 'f']) await page.keyboard.press(key);
-  await filesColumn(page, directory).getByRole('button', { name: 'shown.ts', exact: true }).waitFor();
-  // The files cursor holds the revealed file itself, not the column's first entry.
-  await until(async () => (await page.locator('.file-list button[data-cursor] .file-name').innerText()) === 'shown.ts');
+  const column = filesColumn(page, directory);
+  await column.getByText('shown.ts', { exact: true }).waitFor();
+  await page.evaluate(() => {
+    window.fileClicks = [];
+    window.wangcai.subscribe('onclick', (entry) => window.fileClicks.push(entry.path));
+  });
+  await page.keyboard.press('Enter');
+  await until(async () => (await page.evaluate(() => window.fileClicks)).includes(file));
   // They are this page's keys, so a press made with the keyboard nowhere in it answers nothing.
   await page.evaluate(() => document.activeElement?.blur());
   for (const key of [leader, 'g', 'p']) await page.keyboard.press(key);
@@ -170,6 +172,56 @@ test('a file is shown again where it was left', { timeout: 120000 }, () => withW
   assert.deepEqual(errors, []);
 }));
 
+test('jumping to either end of a selection collapses it and reuses a visit at the same cursor', () => withWindow('wangcai-editor-selection-jump', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'selected.txt');
+  await showWritten(page, file, 'abcdefghijk', 'abcdefghijk');
+  const content = codeContent(shownPanel(page));
+  await content.focus();
+  for (const [column, visits] of [[9, 1], [3, 2]]) {
+    await page.keyboard.press('Escape');
+    await page.keyboard.type('0llv5l');
+    await until(() => content.evaluate(element => {
+      const selection = element.ownerDocument.getSelection();
+      return selection.anchorOffset === 2 && selection.focusOffset === 8;
+    }));
+    await clickFile(page, { ...visitTo(file), line: 1, column });
+    await until(() => content.evaluate((element, column) => {
+      const selection = element.ownerDocument.getSelection();
+      return selection.isCollapsed && selection.focusOffset === column - 1;
+    }, column));
+    await until(async () => {
+      const [history] = Object.values(await storedHistory(page));
+      return history?.entries.length === visits && history.entries[history.index].column === column;
+    });
+  }
+  assert.deepEqual(errors, []);
+}));
+
+test('a visit loaded in a hidden pane restores its offset when scrolling becomes possible', () => withWindow('wangcai-editor-hidden-position', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'long.txt');
+  writeFileSync(file, Array.from({ length: 400 }, (_, i) => `row ${i + 1}`).join('\n'));
+  await showWritten(page, join(home, 'start.txt'), 'start', 'start');
+  const panel = shownPanel(page), top = 2400;
+  const hidden = await page.addStyleTag({ content: '.editor-code { display: none !important }' });
+  const clipped = await page.addStyleTag({ content: '.editor-code .cm-scroller { overflow: clip !important }' });
+  await clickFile(page, { ...visitTo(file), line: 200, column: 1, top });
+  await waitForPath(panel, file);
+  const scroller = panel.locator('.cm-scroller');
+  await scroller.waitFor({ state: 'attached' });
+  await scroller.evaluate(async element => {
+    if (element.clientHeight) throw new Error('the editor must load while hidden');
+    for (let frame = 0; frame < 65; frame++) await new Promise(requestAnimationFrame);
+  });
+  await hidden.evaluate(style => style.remove());
+  await scroller.evaluate(async element => {
+    for (let frame = 0; frame < 4; frame++) await new Promise(requestAnimationFrame);
+    if (!element.clientHeight || element.scrollTop) throw new Error('the visible editor must still be clipped');
+  });
+  await clipped.evaluate(style => style.remove());
+  await until(() => scroller.evaluate((element, top) => element.scrollTop === top, top));
+  assert.deepEqual(errors, []);
+}));
+
 test('a visit that names no place is the file at its top, which the jump after it comes back to', { timeout: 180000 }, () => withWindow('wangcai-editor-jump-top', lists, async ({ home, page, errors }) => {
   const file = join(home, 'long.ts');
   const longLine = (index) => `const line${index} = ${index};`;
@@ -182,6 +234,21 @@ test('a visit that names no place is the file at its top, which the jump after i
   await landedOn(page, file, longLine(1));
   await page.keyboard.press('Control+i');
   await landedOn(page, file, longLine(200));
+
+  // Typing at the visited line keeps a manual scroll while the caret is still visible.
+  await page.keyboard.press('i');
+  await page.keyboard.type('X');
+  await lineShown(page, `X${longLine(200)}`);
+  const scroller = shownPanel(page).locator('.cm-scroller');
+  const top = await scroller.evaluate(el => {
+    const line = el.querySelector('.cm-activeLine');
+    el.scrollTop += line.getBoundingClientRect().top - el.getBoundingClientRect().top - el.clientHeight / 3;
+    return el.scrollTop;
+  });
+  await page.keyboard.type('Y');
+  await lineShown(page, `XY${longLine(200)}`);
+  const after = await scroller.evaluate(el => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(el.scrollTop)))));
+  assert.ok(Math.abs(after - top) < 2, `typing moved the viewport from ${top} to ${after}`);
   assert.deepEqual(errors, []);
 }));
 
@@ -296,6 +363,12 @@ test('a language named in fontSizes reads at that size, and one unnamed keeps fo
   assert.equal(await sizeOf(), '12px');
   await showFile(shownPanel(page), note, 'Sized note');
   assert.equal(await sizeOf(), '16px');
+  for (const name of ['constructor', 'note.__proto__']) {
+    const plain = join(home, name);
+    writeFileSync(plain, name);
+    await showFile(shownPanel(page), plain, name);
+    assert.equal(await sizeOf(), '12px');
+  }
   assert.deepEqual(errors, []);
 }));
 
@@ -305,7 +378,11 @@ test('the cursor ask answers with the file and line the tab shows', { timeout: 1
   await until(() => editorFocused(page));
   await page.keyboard.press('G');
   await lineShown(page, 'const third');
-  assert.deepEqual(await page.evaluate(() => window.wangcai.call('request', 'editor', 'cursor')),
-    { type: 'file', machine, path: code, line: 3, column: 1 });
+  const cursor = () => page.evaluate(() => window.wangcai.call('request', 'editor', 'cursor'));
+  const last = { ...visitTo(code), line: 3, column: 1 };
+  assert.deepEqual(await cursor(), last);
+  await clickFile(page, { ...last, line: 9999 });
+  await until(async () => Object.values(await storedHistory(page)).some(history => history.entries.length === 2));
+  assert.deepEqual(await cursor(), last);
   assert.deepEqual(errors, []);
 }));

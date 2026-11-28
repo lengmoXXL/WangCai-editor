@@ -1,8 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } = require('node:fs');
+const { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
-const { alert, backButton, codeContent, codeShowing, dirtyMark, drawnLines, lists, selectionMarks, showAfter, showFile, shownPanel, showWritten, typeInto } = require('./editor-ui.cjs');
+const { alert, backButton, codeContent, codeShowing, dirtyMark, drawnLines, lists, refreshButton, selectionMarks, showAfter, showFile, shownPanel, showWritten, typeInto } = require('./editor-ui.cjs');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 
 // The keys that used to write the file, and which now do nothing: the buffer is written back on its own.
@@ -59,20 +59,47 @@ test(':w and <C-s> no longer write the file', { timeout: 120000 }, () => withWin
   assert.deepEqual(errors, []);
 }));
 
-test('a file changed on disk with no edit of its own is drawn as the disk holds it, and not written again', { timeout: 120000 }, () => withWindow('wangcai-editor-merge-noop', lists, async ({ home, page, errors }) => {
+test('an external CRLF change appears in the editor without another write', { timeout: 120000 }, () => withWindow('wangcai-editor-merge-noop', lists, async ({ home, page, errors }) => {
   const file = join(home, 'noop-merge.ts');
-  await showWritten(page, file, keptBody, keptLine);
+  await showWritten(page, file, `${keptLine}\r\n${addedLine}\r\n`, keptLine);
   await sleep(700);
   const changedLine = 'const changed = 2;';
-  writeFileSync(file, `${changedLine}\n`);
+  const disk = `${keptLine}\r\n${changedLine}\r\n`;
+  writeFileSync(file, disk);
   const mtime = statSync(file).mtimeMs;
   // The buffer takes the disk's text, and since the merge leaves the disk as it is, no write is asked for.
   await codeShowing(shownPanel(page), changedLine).waitFor();
   await sleep(700);
-  assert.deepEqual(await drawnLines(page), [changedLine, '']);
-  assert.equal(readFileSync(file, 'utf8'), `${changedLine}\n`);
+  assert.deepEqual(await drawnLines(page), [keptLine, changedLine, '']);
+  assert.equal(readFileSync(file, 'utf8'), disk);
+  assert.equal(statSync(file).mtimeMs, mtime);
+  await page.keyboard.press('i');
+  await page.keyboard.type('X');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('u');
+  await sleep(700);
+  assert.equal(readFileSync(file, 'utf8'), disk);
   assert.equal(statSync(file).mtimeMs, mtime);
   assert.equal(await dirtyMark(shownPanel(page)).count(), 0);
+  assert.deepEqual(errors, []);
+}));
+
+test('undo and redo after autosave preserve the original mixed line endings', { timeout: 120000 }, () => withWindow('wangcai-editor-mixed-undo', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'mixed.txt');
+  const original = 'a\r\nb\nc\r\n';
+  await showWritten(page, file, original, 'a');
+  await page.keyboard.type('dd');
+  await until(() => readFileSync(file, 'utf8') === 'b\nc\r\n');
+  await page.keyboard.press('u');
+  await until(() => readFileSync(file, 'utf8').startsWith('a'));
+  assert.equal(readFileSync(file, 'utf8'), original);
+  await page.keyboard.press('Control+r');
+  await until(() => readFileSync(file, 'utf8') === 'b\nc\r\n');
+  writeFileSync(file, 'a\nb\nc\r\n');
+  await codeShowing(shownPanel(page), 'a').waitFor();
+  await page.keyboard.press('u');
+  await until(() => readFileSync(file, 'utf8').split('\n').length === 5);
+  assert.equal(readFileSync(file, 'utf8'), 'a\na\r\nb\nc\r\n');
   assert.deepEqual(errors, []);
 }));
 
@@ -89,6 +116,31 @@ test('changes that do not overlap are kept from both sides and written back', { 
   // Both changes survive: the buffer's first line and the disk's last line, and the merge is written back.
   await until(() => readFileSync(file, 'utf8') === 'Xa\nb\nC\n');
   assert.deepEqual(await drawnLines(page), ['Xa', 'b', 'C', '']);
+  await page.keyboard.press('u');
+  await until(() => readFileSync(file, 'utf8') === 'a\nb\nC\n');
+  assert.deepEqual(await drawnLines(page), ['a', 'b', 'C', '']);
+  assert.deepEqual(errors, []);
+}));
+
+test('a failed refresh retains the editor and a later insertion maps its cursor and undo', { timeout: 120000 }, () => withWindow('wangcai-editor-read-recovery', lists, async ({ home, page, errors }) => {
+  const file = join(home, 'recover.txt');
+  const panel = shownPanel(page);
+  await showWritten(page, file, 'first\nsecond\nlast\n', 'second');
+  await page.keyboard.type('j');
+  await typeInto(page, 'X');
+  await until(() => readFileSync(file, 'utf8') === 'first\nXsecond\nlast\n');
+  renameSync(file, file + '.away');
+  const refresh = () => refreshButton(panel).evaluate(button => button.click());
+  await refresh();
+  await alert(panel).waitFor();
+  assert.equal(await codeContent(panel).evaluate(el => el === document.activeElement), true);
+  writeFileSync(file, 'external\nfirst\nXsecond\nlast\n');
+  await refresh();
+  await codeShowing(panel, 'external').waitFor();
+  const cursor = await page.evaluate(() => window.wangcai.call('request', 'editor', 'cursor'));
+  assert.equal(cursor.line, 3);
+  await page.keyboard.press('u');
+  await until(() => readFileSync(file, 'utf8') === 'external\nfirst\nsecond\nlast\n');
   assert.deepEqual(errors, []);
 }));
 
@@ -174,12 +226,28 @@ test('a write that fails says so over the page, keeps the text, and takes the wo
 
 test('pasting over a selection replaces it rather than appending at the caret', { timeout: 120000 }, () => withWindow('wangcai-editor-paste-selection', lists, async ({ home, page, errors }) => {
   const file = join(home, 'paste.ts');
-  await showWritten(page, file, 'alpha\nbeta\n', 'alpha');
+  await showWritten(page, file, 'alpha\nbeta', 'alpha');
   await page.evaluate(() => navigator.clipboard.writeText('PASTED'));
   await codeContent(shownPanel(page)).focus();
   await page.keyboard.type('viw');
   await until(async () => (await selectionMarks(shownPanel(page)).count()) > 0);
   await page.keyboard.press('Meta+v');
-  await until(() => readFileSync(file, 'utf8') === 'PASTED\nbeta\n');
+  await until(() => readFileSync(file, 'utf8') === 'PASTED\nbeta');
+  // Native clipboards can normalize CRLF or expose a copied link as plain text before the event reaches the page.
+  for (const [keys, format, value, expected] of [
+    ['j0viw', 'text/plain', 'one\r\ntwo', 'PASTED\none\ntwo'],
+    ['0viw', 'text/uri-list', 'file:///tmp/note', 'PASTED\none\nfile:///tmp/note'],
+  ]) {
+    await page.keyboard.press('Escape');
+    await page.keyboard.type(keys);
+    await until(async () => (await selectionMarks(shownPanel(page)).count()) > 0);
+    await codeContent(shownPanel(page)).evaluate((content, [format, value]) => {
+      content.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', metaKey: true, ctrlKey: true, bubbles: true, cancelable: true }));
+      const clipboardData = new DataTransfer();
+      clipboardData.setData(format, value);
+      content.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+    }, [format, value]);
+    await until(() => readFileSync(file, 'utf8') === expected);
+  }
   assert.deepEqual(errors, []);
 }));

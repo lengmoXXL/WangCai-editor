@@ -2,15 +2,13 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { mkdirSync, writeFileSync } = require('node:fs');
 const { basename, join } = require('node:path');
-const { alert, backButton, closeWorkspace, codeShowing, codeSurface, cursorAt, diagnostics, dismiss, dismissSearch, editorFocused, hoverTips, landed, landedOn, lineBoxes, lists, lspDetail, lspDot, noServerReason, placeFileName, placeList, placeRows, placeText, queryApplied, search, searchInput, searchMarks, searchPanel, searchRowEntries, searchRowNamed, showFile, shownPanel, showWritten, storedHistory, submitSearch, typeInto, workspaceTabs } = require('./editor-ui.cjs');
+const { alert, backButton, clickFile, closeWorkspace, codeShowing, codeSurface, cursorAt, diagnostics, dismiss, dismissSearch, editorFocused, hoverTips, landedOn, lineBoxes, lists, lspDetail, lspDot, machine, noServerReason, placeFileName, placeList, placeRows, placeText, queryApplied, search, searchInput, searchMarks, searchPanel, searchRowEntries, searchRowNamed, showFile, shownPanel, showWritten, storedHistory, submitSearch, typeInto, workspaceTabs } = require('./editor-ui.cjs');
 const { until, withWindow } = require('@lengmoxxl/wangcai-testkit');
 const { areaNameAt, flatBody, flatNames, flatServer, languageServers, openRust, openTs, serverFor, treeBody, treeNames, treeServer, messageServer, serverSaid } = require('./lsp-fixtures.cjs');
 
-// The name the shapes file a case writes is imported by, so that the specifier and the path agree.
 const shapesName = 'shapes';
 const stubName = 'Demo.ts';
 
-// The tokens, lines and panel titles the cases below share, so that each is written once and read by name.
 const answerToken = 'answer';
 const shapeToken = 'Shape';
 const squareToken = 'Square';
@@ -23,8 +21,6 @@ const firstLine = `const first = ${answerToken};`;
 const referencesTitle = '引用';
 const implementationsTitle = '实现';
 
-// The keys the plugin answers itself, as the README lists them: the four jumps of the normal mode, the pair that walks
-// the tab's history, and the one that opens the search picker.
 const definitionKeys = ['g', 'd'];
 const implementationKeys = ['g', 'i'];
 const typeDefinitionKeys = ['g', 'D'];
@@ -32,15 +28,9 @@ const referencesKeys = ['g', 'r'];
 const jumpBackKey = 'Control+o';
 const jumpForwardKey = 'Control+i';
 const pickerKey = 'Control+f';
-// The interface and the class that implements it, which the fixtures that jump between places are built on.
 const shapeBlock = `${interfaceLine}\n  ${areaToken}(): number;\n}\n\n${classLine}\n  ${areaToken}(): number {\n    return 4;\n  }\n}`;
-// A file with the shapes a case jumps to — one value, one interface, and a class implementing it — so that a jump has
-// places to land on.
 const shapesBody = `${answerLine}\n\n${shapeBlock}\n`;
-// The main file a case opens: the import of those shapes, then the two lines it jumps from.
 const mainBody = `import { ${shapeToken}, ${squareToken}, ${answerToken} } from "./${shapesName}";\n\n${firstLine}\n${subjectLine}\n`;
-// The shapes file written to disk for the server to read, and the main file that imports it opened in the window; both
-// paths are handed back.
 const openShapes = async (home, page) => {
   const shapes = join(home, `${shapesName}.ts`);
   writeFileSync(shapes, shapesBody);
@@ -156,9 +146,9 @@ test('the right-click menu answers definitions, type definitions, and references
     await take();
     await menu.waitFor({ state: 'detached' });
   };
-  // A jump that landed nowhere is asked for again.
   const jump = async (lineText, token, take, path, landedText) => {
-    await until(() => landed(page, path, landedText), { act: async () => pick(lineText, token, take) });
+    await pick(lineText, token, take);
+    await landedOn(page, path, landedText);
   };
   const back = async () => {
     await backButton(page).click();
@@ -276,6 +266,36 @@ test('the jump keys ask the server, walk back through where they were made, and 
   assert.deepEqual(errors, []);
 }));
 
+test('Back from a definition restores the viewport of the visit that requested it', { timeout: 120000 }, () => withWindow('wangcai-editor-definition-back', lists, async ({ home, page, errors }) => {
+  const shapes = join(home, `${shapesName}.ts`);
+  writeFileSync(shapes, answerLine);
+  const first = `import { ${answerToken} } from "./${shapesName}";`;
+  const line = 230;
+  const main = await openTs(home, page, first + '\n'.repeat(line - 1) + firstLine + '\n'.repeat(60), first);
+  await clickFile(page, { type: 'file', machine, path: main, line });
+  await landedOn(page, main, firstLine);
+  const scroller = shownPanel(page).locator('.cm-scroller');
+  await until(() => scroller.evaluate(el => el.scrollTop > el.clientHeight));
+  const top = await scroller.evaluate(el => {
+    const caret = el.querySelector('.cm-activeLine').getBoundingClientRect();
+    el.scrollTop += caret.top - el.getBoundingClientRect().top - el.clientHeight / 4;
+    return el.scrollTop;
+  });
+  const [server] = languageServers(home);
+  assert.ok(server);
+  process.kill(Number(server), 'SIGSTOP');
+  try {
+    await pressOn(page, firstLine, answerToken, ...definitionKeys);
+    await page.keyboard.press('k');
+    await until(async () => (await page.evaluate(() => window.wangcai.call('request', 'editor', 'cursor')))?.line === line - 1);
+  } finally { process.kill(Number(server), 'SIGCONT'); }
+  await landedOn(page, shapes, answerLine);
+  await page.keyboard.press(jumpBackKey);
+  await until(() => scroller.evaluate((el, top) => Math.abs(el.scrollTop - top) <= 1, top), { timeout: 10000 });
+  await landedOn(page, main, firstLine);
+  assert.deepEqual(errors, []);
+}));
+
 test('the search box offers the symbols of the file the tab is on', { timeout: 90000 }, () => withWindow('wangcai-editor-symbols', lists, async ({ home, page, errors }) => {
   const computeToken = 'computeTotal';
   const counterToken = 'counter';
@@ -354,7 +374,11 @@ test('switching to @ after a file preview finds symbols in the file where Ctrl+F
   await lspDot(shownPanel(page), 'open').waitFor();
   await until(() => editorFocused(page));
   await page.keyboard.press(pickerKey);
-  await searchRowNamed(page, other).hover();
+  const preview = searchRowNamed(page, other);
+  await until(async () => {
+    await preview.hover();
+    return await preview.getAttribute('aria-current') === 'true';
+  });
   await codeShowing(shownPanel(page), otherText).waitFor();
   await page.keyboard.type(`@${name}`);
   await searchRowNamed(page, name).waitFor({ timeout: 10000 });
