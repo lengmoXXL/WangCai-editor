@@ -192,4 +192,25 @@ test('a worktree refresh keeps the scroll where the reader left it, not at the c
   assert.deepEqual(errors, []);
 }));
 
+test('a large comparison marks only changed lines, not one crude block', { timeout: 180000 }, () => withWindow('wangcai-editor-diff-large', lists, async ({ home, page, errors }) => {
+  const lines = Array.from({ length: 1000 }, (_, at) => `const line${at} = ${at};`);
+  const before = lines.join('\n') + '\n';
+  for (let at = 100; at <= 900; at += 1) if (at !== 500) lines[at] += 'X';
+  const file = repoWithChange(home, before, lines.join('\n') + '\n');
+
+  await openEditorWorkspace(page);
+  await clickFile(page, { type: 'file', machine, path: `git://${file}@:index~:worktree` });
+  await forceReading(page, '双栏');
+  await until(() => page.locator(`${diffHost} .cm-mergeView`).count().then(n => n > 0));
+  // Scroll into the changed region: the one unchanged line there must not be painted as changed.
+  await page.evaluate(() => { document.querySelector('.editor-diff .cm-mergeView').scrollTop = 9800; });
+  await lineShown(page, sideB, 'const line500 = 500;');
+  const marked = await page.evaluate((sel) => {
+    const line = [...document.querySelectorAll(`${sel} .cm-line`)].find(l => l.textContent.includes('const line500 = 500;'));
+    return line ? line.className.includes('cm-changedLine') : null;
+  }, sideB);
+  assert.equal(marked, false, 'an unchanged line in the changed region must not be marked changed');
+  assert.deepEqual(errors, []);
+}));
+
 

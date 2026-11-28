@@ -23,6 +23,10 @@ mapVimAction('gf', 'wangcai-editor-open-file', (view) => diffOpen.get(view)?.())
 // The comparison a pane last held, by git url, so a jump back shows it at once while the sides are read again quietly.
 const diffCache = boundedCache<Diff>(50);
 
+// The merge view's default scanLimit (500) falls back to a crude diff on larger files, painting unchanged lines as
+// changed. Search precisely instead, with a time budget so a pathological comparison cannot hang the page.
+const diffConfig = { scanLimit: 1e9, timeout: 1000 };
+
 const readingOrder = ['auto', 'split', 'inline'] as const;
 type Reading = typeof readingOrder[number];
 const readings: Record<Reading, string> = { auto: '自动', split: '双栏', inline: '单栏' };
@@ -84,7 +88,7 @@ function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, 
       write: (oldText: string, newText: string) => void, destroy: () => void;
     if (unified) {
       const view = new EditorView({
-        state: EditorState.create({ doc: diff.newText, extensions: [...common, unifiedMergeView({ original: diff.oldText, mergeControls: false, gutter: false })] }),
+        state: EditorState.create({ doc: diff.newText, extensions: [...common, unifiedMergeView({ original: diff.oldText, mergeControls: false, gutter: false, diffConfig })] }),
         parent: host,
       });
       scroller = view.scrollDOM; views = [view];
@@ -100,7 +104,7 @@ function DiffSurface({ context, diff, path, reading, wrap, font, jumps, blocks, 
       const view = new MergeView({
         a: { doc: diff.oldText, extensions: common },
         b: { doc: diff.newText, extensions: common },
-        parent: host, gutter: false,
+        parent: host, gutter: false, diffConfig,
       });
       scroller = view.dom; views = [view.a, view.b];
       count = () => view.chunks.length;
